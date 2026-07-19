@@ -1,17 +1,12 @@
-[package]
-name = "iron-file"
+[workspace]
+members = [
+  "crates/backend",
+  "crates/iced-frontend",
+  "crates/gtk-frontend",
+]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-default-run = "iron-file"
-
-[features]
-gtk4 = ["dep:gtk4"]
-
-[dependencies]
-gtk4 = { version = "0.11", optional = true }
-iced = { version = "0.13", features = ["tokio"] }
-
-[[bin]]
-name = "iron-file-gtk"
-path = "src/bin/iron-file-gtk.rs"
-required-features = ["gtk4"]
+license = "MIT"

@@ -1,36 +1,37 @@
 # iron-file
 
-Basic GUI application with message-based communication between the main GUI
-thread and a shared background worker. Press the button to send an event to the
-worker; it replies with a status update displayed in the window. Iced is the
-default frontend, with GTK4 available as an optional build target.
+`iron-file` is a three-process Rust workspace. The frontend processes use gRPC
+over a local Unix-domain socket to browse files through one shared backend.
+
+| Package | Process | Purpose |
+| --- | --- | --- |
+| `iron-file-backend` | backend | Singleton filesystem service and gRPC server |
+| `iron-file-iced` | Iced frontend | Default file-browser GUI client |
+| `iron-file-gtk` | GTK4 frontend | GTK4 file-browser GUI client |
+
+## Run
+
+Enter the Nix shell with `direnv allow` or `nix develop`, then start the
+backend once:
+
+```sh
+run-backend
+```
+
+Start any number of frontends in separate terminals. They all connect to the
+same backend:
+
+```sh
+run
+run-gtk
+```
+
+The backend listens at `$XDG_RUNTIME_DIR/iron-file-backend.sock`, or at the
+path set by `IRON_FILE_SOCKET`. A second backend refuses to start while the
+socket is owned by a running backend. If the prior process exited unexpectedly,
+the next backend removes the stale socket before binding. An OS-level lock file
+also prevents concurrent startup races from producing more than one backend.
 
 Both frontends provide an address bar, parent-folder navigation, clickable
-folder/file entries, and a text-file preview pane. Files over 1 MB and binary
-files are shown as a short preview notice.
-
-On Linux, the app uses X11 when `DISPLAY` is available. This avoids selecting
-an unusable Wayland backend in environments that expose both display variables.
-
-## NixOS development
-
-The included `flake.nix` provides the X11, Wayland, Vulkan, GTK4, and Rust
-runtime dependencies. With direnv and nix-direnv installed, run:
-
-```sh
-direnv allow
-```
-
-Alternatively, enter the shell explicitly with `nix develop`. Then run the
-application with `cargo run` or the `run` wrapper.
-
-## GTK4 frontend
-
-Build and run the non-default GTK4 target with:
-
-```sh
-cargo run --bin iron-file-gtk --features gtk4
-```
-
-Both frontends use the same channel-based backend in `src/lib.rs`.
-Inside the direnv shell, `run-gtk` provides the same GTK4 command.
+directory/file entries, and text-file previews. Binary files and files larger
+than 1 MB display a short preview notice.

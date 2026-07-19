@@ -28,6 +28,7 @@
             packages = with pkgs; [
               cargo
               pkg-config
+              protobuf
               rustc
             ];
 

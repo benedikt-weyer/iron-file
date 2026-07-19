@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+
+exec cargo run --package iron-file-backend -- "$@"
