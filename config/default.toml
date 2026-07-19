@@ -2,6 +2,10 @@
 name = "Default"
 color_mode = "system"
 
+[theme]
+light_highlight = "#4f7cac"
+dark_highlight = "#85b7eb"
+
 [[sidebar_locations]]
 label = "Home"
 path = "~/"

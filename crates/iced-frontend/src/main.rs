@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use iced::{
-    Element, Font, Length, Point, Task, Theme,
+    Color, Element, Font, Length, Point, Task, Theme,
     widget::{
         Space, button, column, container, mouse_area, radio, row, scrollable, stack, text,
         text_input, tooltip,
@@ -217,11 +217,31 @@ impl Gui {
     }
 
     fn theme(&self) -> Theme {
-        match self.color_mode {
+        let base = match self.color_mode {
             ColorMode::Day => Theme::Light,
             ColorMode::Night => Theme::Dark,
             ColorMode::System => Theme::default(),
-        }
+        };
+        let theme_settings = self.active_theme_settings();
+        let highlight = if matches!(base, Theme::Dark) {
+            &theme_settings.dark_highlight
+        } else {
+            &self.active_theme_settings().light_highlight
+        };
+        let Some(highlight) = parse_color(highlight) else {
+            return base;
+        };
+        let mut palette = base.palette();
+        palette.primary = highlight;
+        Theme::custom("Iron File".into(), palette)
+    }
+
+    fn active_theme_settings(&self) -> iron_file_common::config::ThemeSettings {
+        self.active_profile
+            .as_deref()
+            .and_then(|path| self.profiles.iter().find(|profile| profile.path == path))
+            .map(|profile| profile.theme.clone())
+            .unwrap_or_else(iron_file_common::config::default_theme_settings)
     }
 
     fn select_profile(&mut self, path: PathBuf) {
@@ -434,6 +454,7 @@ impl Gui {
             } else {
                 column.push(
                     button(row![icon, text(&entry.name)].spacing(8))
+                        .style(iced::widget::button::text)
                         .width(Length::Fill)
                         .on_press(Message::OpenPath(path)),
                 )
@@ -526,19 +547,29 @@ impl Gui {
             column![text("Locations").size(16)].spacing(6),
             |column, location| {
                 let is_dragging = self.dragging_sidebar_location.as_ref() == Some(&location.path);
+                let is_open = self.directory_path == location.path;
                 let label = if is_dragging {
                     format!("Moving {}", location.label)
                 } else {
                     location.label.clone()
                 };
+                let item =
+                    container(row![icon_text(sidebar_icon(&location)), text(label)].spacing(8))
+                        .padding(8)
+                        .width(Length::Fill);
+                let item = if is_open {
+                    item.style(|theme| {
+                        iced::widget::container::Style::default()
+                            .background(theme.palette().primary)
+                            .color(theme.palette().background)
+                    })
+                } else {
+                    item
+                };
                 column.push(
-                    mouse_area(
-                        container(row![icon_text(sidebar_icon(&location)), text(label)].spacing(8))
-                            .padding(8)
-                            .width(Length::Fill),
-                    )
-                    .on_press(Message::SidebarPressed(location.path.clone()))
-                    .on_release(Message::SidebarReleased(location.path)),
+                    mouse_area(item)
+                        .on_press(Message::SidebarPressed(location.path.clone()))
+                        .on_release(Message::SidebarReleased(location.path)),
                 )
             },
         );
@@ -670,4 +701,15 @@ fn sidebar_icon(location: &SidebarLocation) -> &'static str {
         "Pictures" => "image",
         _ => "folder",
     }
+}
+
+fn parse_color(value: &str) -> Option<Color> {
+    let value = value.strip_prefix('#')?;
+    if value.len() != 6 {
+        return None;
+    }
+    let red = u8::from_str_radix(&value[0..2], 16).ok()?;
+    let green = u8::from_str_radix(&value[2..4], 16).ok()?;
+    let blue = u8::from_str_radix(&value[4..6], 16).ok()?;
+    Some(Color::from_rgb8(red, green, blue))
 }

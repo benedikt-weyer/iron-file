@@ -33,6 +33,7 @@ pub struct Profile {
     pub name: String,
     pub color_mode: ColorMode,
     pub sidebar_locations: Vec<SidebarLocation>,
+    pub theme: ThemeSettings,
     pub read_only: bool,
     pub base_profile: Option<PathBuf>,
 }
@@ -41,6 +42,12 @@ pub struct Profile {
 pub struct SidebarLocation {
     pub label: String,
     pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThemeSettings {
+    pub light_highlight: String,
+    pub dark_highlight: String,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +61,7 @@ struct ProfileFile {
     name: Option<String>,
     color_mode: Option<ColorMode>,
     sidebar_locations: Option<Vec<SidebarLocation>>,
+    theme: Option<ThemeSettings>,
     base_profile: Option<PathBuf>,
 }
 
@@ -144,6 +152,7 @@ impl ConfigStore {
             name: Some(name.into()),
             color_mode: Some(ColorMode::System),
             sidebar_locations: Some(default_sidebar_locations()),
+            theme: Some(default_theme_settings()),
             base_profile: None,
         };
         self.write_profile_file(&path, &file)?;
@@ -179,6 +188,7 @@ impl ConfigStore {
                 name: Some(profile.name.clone()),
                 color_mode: Some(color_mode),
                 sidebar_locations: None,
+                theme: None,
                 base_profile: Some(profile.path.clone()),
             };
             self.write_profile_file(&overlay, &file)?;
@@ -202,6 +212,7 @@ impl ConfigStore {
                 name: Some(profile.name.clone()),
                 color_mode: None,
                 sidebar_locations: Some(sidebar_locations),
+                theme: None,
                 base_profile: Some(profile.path.clone()),
             };
             self.write_profile_file(&overlay, &file)?;
@@ -226,6 +237,7 @@ impl ConfigStore {
                 name: Some(profile.name.clone()),
                 color_mode: Some(color_mode),
                 sidebar_locations: Some(sidebar_locations),
+                theme: Some(default_theme_settings()),
                 base_profile: Some(profile.path.clone()),
             };
             self.write_profile_file(&overlay, &file)?;
@@ -234,6 +246,7 @@ impl ConfigStore {
             let mut file = self.read_profile_file(&profile.path)?;
             file.color_mode = Some(color_mode);
             file.sidebar_locations = Some(sidebar_locations);
+            file.theme = Some(default_theme_settings());
             self.write_profile_file(&profile.path, &file)?;
             profile.path.clone()
         };
@@ -267,6 +280,10 @@ impl ConfigStore {
                     .map(|profile| profile.sidebar_locations.clone())
             })
             .unwrap_or_else(default_sidebar_locations);
+        let theme = file
+            .theme
+            .or_else(|| inherited.as_ref().map(|profile| profile.theme.clone()))
+            .unwrap_or_else(default_theme_settings);
         let name = file.name.unwrap_or_else(|| profile_name_from_path(path));
         let read_only = fs::metadata(path)
             .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?
@@ -277,6 +294,7 @@ impl ConfigStore {
             name,
             color_mode,
             sidebar_locations,
+            theme,
             read_only,
             base_profile: file.base_profile,
         })
@@ -335,6 +353,12 @@ pub fn default_sidebar_locations() -> Vec<SidebarLocation> {
             location
         })
         .collect()
+}
+
+pub fn default_theme_settings() -> ThemeSettings {
+    default_profile_file()
+        .theme
+        .expect("default profile must define theme")
 }
 
 fn default_profile_file() -> ProfileFile {
@@ -516,6 +540,7 @@ mod tests {
 
         assert_eq!(reset.color_mode, ColorMode::System);
         assert_eq!(reset.sidebar_locations, default_sidebar_locations());
+        assert_eq!(reset.theme, default_theme_settings());
         fs::remove_dir_all(directory).unwrap();
     }
 
