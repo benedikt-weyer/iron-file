@@ -8,14 +8,24 @@ use std::{
 };
 
 use gtk4::{
-    Application, ApplicationWindow, Button, Entry, Image, Label, ListBox, Orientation,
-    ScrolledWindow, TextView,
+    Application, ApplicationWindow, Button, DragSource, DropTarget, Entry, GestureClick, Image,
+    Label, ListBox, Orientation, Popover, ScrolledWindow, TextView, gdk,
     glib::{self, ControlFlow},
     prelude::*,
 };
-use iron_file_common::{browse, ensure_backend, proto};
+use iron_file_common::{
+    browse,
+    config::{ConfigStore, Profile, SidebarLocation},
+    ensure_backend, proto,
+};
 use proto::{BrowseResponse, browse_response::Payload};
 use tokio::runtime::Runtime;
+
+struct ConfigState {
+    store: ConfigStore,
+    profiles: Vec<Profile>,
+    active_profile: Option<PathBuf>,
+}
 
 fn main() {
     if let Ok(runtime) = Runtime::new() {
@@ -40,6 +50,7 @@ fn build_ui(
     response_sender: Sender<Result<BrowseResponse, String>>,
     response_receiver: Receiver<Result<BrowseResponse, String>>,
 ) {
+    let config = Rc::new(RefCell::new(load_config_state()));
     let status = Label::new(Some("Connecting to backend"));
     let address = Entry::new();
     let initial_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -49,6 +60,8 @@ fn build_ui(
     let up_button = Button::from_icon_name("go-up-symbolic");
     up_button.set_tooltip_text(Some("Parent folder"));
     let file_list = ListBox::new();
+    let sidebar = ListBox::new();
+    sidebar.set_selection_mode(gtk4::SelectionMode::None);
     let content_view = TextView::new();
     content_view.set_editable(false);
     content_view.set_monospace(true);
@@ -79,8 +92,10 @@ fn build_ui(
     let worker_status = status.clone();
     let worker_address = address.clone();
     let worker_list = file_list.clone();
+    let worker_sidebar = sidebar.clone();
     let worker_content = content_view.buffer();
     let worker_sender = response_sender.clone();
+    let worker_config = config.clone();
     glib::timeout_add_local(Duration::from_millis(50), move || {
         loop {
             match response_receiver.try_recv() {
@@ -91,6 +106,8 @@ fn build_ui(
                     &worker_content,
                     &worker_status,
                     &worker_sender,
+                    &worker_config,
+                    &worker_sidebar,
                 ),
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return ControlFlow::Break,
@@ -121,6 +138,18 @@ fn build_ui(
         .start_child(&files)
         .end_child(&preview)
         .build();
+    let sidebar_view = ScrolledWindow::builder()
+        .child(&sidebar)
+        .width_request(180)
+        .vexpand(true)
+        .build();
+    let main_area = gtk4::Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(12)
+        .vexpand(true)
+        .build();
+    main_area.append(&sidebar_view);
+    main_area.append(&panes);
     let content = gtk4::Box::builder()
         .orientation(Orientation::Vertical)
         .spacing(12)
@@ -131,7 +160,7 @@ fn build_ui(
         .build();
     content.append(&address_bar);
     content.append(&status);
-    content.append(&panes);
+    content.append(&main_area);
     let window = ApplicationWindow::builder()
         .application(app)
         .title("Iron File")
@@ -140,6 +169,8 @@ fn build_ui(
         .child(&content)
         .build();
     window.present();
+
+    replace_sidebar_entries(&sidebar, &config, &response_sender);
 
     request_path(&response_sender, initial_path);
 }
@@ -170,6 +201,8 @@ fn apply_response(
     content: &gtk4::TextBuffer,
     status: &Label,
     sender: &Sender<Result<BrowseResponse, String>>,
+    config: &Rc<RefCell<ConfigState>>,
+    sidebar: &ListBox,
 ) {
     let response = match result {
         Ok(response) => response,
@@ -181,7 +214,7 @@ fn apply_response(
     match response.payload {
         Some(Payload::Directory(directory)) => {
             address.set_text(&response.path);
-            replace_entries(list, sender, directory.entries);
+            replace_entries(list, sender, directory.entries, config, sidebar);
             content.set_text("");
             status.set_text("Directory loaded");
         }
@@ -199,6 +232,8 @@ fn replace_entries(
     list: &ListBox,
     sender: &Sender<Result<BrowseResponse, String>>,
     entries: Vec<proto::FileEntry>,
+    config: &Rc<RefCell<ConfigState>>,
+    sidebar: &ListBox,
 ) {
     while let Some(child) = list.first_child() {
         list.remove(&child);
@@ -216,8 +251,215 @@ fn replace_entries(
         row.append(&Image::from_icon_name(icon_name));
         row.append(&Label::new(Some(&entry.name)));
         let button = Button::builder().child(&row).build();
+        let path = PathBuf::from(&entry.path);
         let entry_sender = sender.clone();
-        button.connect_clicked(move |_| request_path(&entry_sender, PathBuf::from(&entry.path)));
+        let open_path = path.clone();
+        button.connect_clicked(move |_| request_path(&entry_sender, open_path.clone()));
+        if entry.is_directory {
+            add_folder_context_menu(&button, path, config, sender, sidebar);
+        }
         list.append(&button);
+    }
+}
+
+fn load_config_state() -> ConfigState {
+    let store = ConfigStore::from_environment();
+    let mut profiles = store.profiles().unwrap_or_default();
+    if profiles.is_empty() {
+        if let Ok(profile) = store.create_profile("Default") {
+            profiles.push(profile);
+        }
+    }
+    let active_profile = store
+        .active_profile()
+        .ok()
+        .flatten()
+        .filter(|path| profiles.iter().any(|profile| &profile.path == path))
+        .or_else(|| profiles.first().map(|profile| profile.path.clone()));
+    ConfigState {
+        store,
+        profiles,
+        active_profile,
+    }
+}
+
+fn active_sidebar_locations(config: &Rc<RefCell<ConfigState>>) -> Vec<SidebarLocation> {
+    let config = config.borrow();
+    config
+        .active_profile
+        .as_deref()
+        .and_then(|path| config.profiles.iter().find(|profile| profile.path == path))
+        .map(|profile| profile.sidebar_locations.clone())
+        .unwrap_or_default()
+}
+
+fn save_sidebar_locations(
+    config: &Rc<RefCell<ConfigState>>,
+    locations: Vec<SidebarLocation>,
+) -> Result<(), String> {
+    let (store, profile) = {
+        let config = config.borrow();
+        let profile = config
+            .active_profile
+            .as_deref()
+            .and_then(|path| config.profiles.iter().find(|profile| profile.path == path))
+            .cloned()
+            .ok_or_else(|| "No active configuration profile".to_owned())?;
+        (config.store.clone(), profile)
+    };
+    let saved = store.save_sidebar_locations(&profile, locations)?;
+    let saved_path = saved.path.clone();
+    let mut config = config.borrow_mut();
+    if let Some(index) = config
+        .profiles
+        .iter()
+        .position(|profile| profile.path == saved_path)
+    {
+        config.profiles[index] = saved;
+    } else {
+        config.profiles.push(saved);
+    }
+    config.active_profile = Some(saved_path.clone());
+    config.store.set_active_profile(&saved_path)
+}
+
+fn replace_sidebar_entries(
+    sidebar: &ListBox,
+    config: &Rc<RefCell<ConfigState>>,
+    sender: &Sender<Result<BrowseResponse, String>>,
+) {
+    while let Some(child) = sidebar.first_child() {
+        sidebar.remove(&child);
+    }
+    for location in active_sidebar_locations(config) {
+        let row = gtk4::Box::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(8)
+            .margin_top(6)
+            .margin_bottom(6)
+            .margin_start(8)
+            .margin_end(8)
+            .build();
+        row.append(&Image::from_icon_name(sidebar_icon_name(&location)));
+        row.append(&Label::new(Some(&location.label)));
+        let button = Button::builder().child(&row).build();
+        let path = location.path.clone();
+        let open_sender = sender.clone();
+        button.connect_clicked(move |_| request_path(&open_sender, path.clone()));
+
+        let drag_source = DragSource::builder().actions(gdk::DragAction::MOVE).build();
+        let drag_path = location.path.display().to_string();
+        drag_source.connect_prepare(move |_, _, _| {
+            Some(gdk::ContentProvider::for_value(&drag_path.to_value()))
+        });
+        button.add_controller(drag_source);
+
+        let drop_target = DropTarget::new(String::static_type(), gdk::DragAction::MOVE);
+        let target_path = location.path.clone();
+        let drop_config = config.clone();
+        let drop_sidebar = sidebar.clone();
+        let drop_sender = sender.clone();
+        drop_target.connect_drop(move |_, value, _, _| {
+            let Ok(source) = value.get::<String>() else {
+                return false;
+            };
+            let source = PathBuf::from(source);
+            if source == target_path {
+                return false;
+            }
+            let mut locations = active_sidebar_locations(&drop_config);
+            let Some(source_index) = locations
+                .iter()
+                .position(|location| location.path == source)
+            else {
+                return false;
+            };
+            let moved = locations.remove(source_index);
+            let Some(target_index) = locations
+                .iter()
+                .position(|location| location.path == target_path)
+            else {
+                return false;
+            };
+            locations.insert(target_index, moved);
+            if save_sidebar_locations(&drop_config, locations).is_ok() {
+                replace_sidebar_entries(&drop_sidebar, &drop_config, &drop_sender);
+                true
+            } else {
+                false
+            }
+        });
+        button.add_controller(drop_target);
+        sidebar.append(&button);
+    }
+}
+
+fn add_folder_context_menu(
+    button: &Button,
+    path: PathBuf,
+    config: &Rc<RefCell<ConfigState>>,
+    sender: &Sender<Result<BrowseResponse, String>>,
+    sidebar: &ListBox,
+) {
+    let gesture = GestureClick::new();
+    gesture.set_button(3);
+    let menu_button = button.clone();
+    let menu_config = config.clone();
+    let menu_sender = sender.clone();
+    let menu_sidebar = sidebar.clone();
+    gesture.connect_pressed(move |_, _, _, _| {
+        let locations = active_sidebar_locations(&menu_config);
+        let is_in_sidebar = locations.iter().any(|location| location.path == path);
+        let action = Button::with_label(if is_in_sidebar {
+            "Remove from sidebar"
+        } else {
+            "Add to sidebar"
+        });
+        let popover = Popover::new();
+        let content = gtk4::Box::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(6)
+            .margin_top(6)
+            .margin_bottom(6)
+            .margin_start(6)
+            .margin_end(6)
+            .build();
+        content.append(&action);
+        popover.set_child(Some(&content));
+        popover.set_parent(&menu_button);
+        let action_config = menu_config.clone();
+        let action_sidebar = menu_sidebar.clone();
+        let action_sender = menu_sender.clone();
+        let action_path = path.clone();
+        action.connect_clicked(move |_| {
+            let mut locations = active_sidebar_locations(&action_config);
+            if is_in_sidebar {
+                locations.retain(|location| location.path != action_path);
+            } else {
+                let label = action_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| action_path.display().to_string());
+                locations.push(SidebarLocation {
+                    label,
+                    path: action_path.clone(),
+                });
+            }
+            if save_sidebar_locations(&action_config, locations).is_ok() {
+                replace_sidebar_entries(&action_sidebar, &action_config, &action_sender);
+            }
+        });
+        popover.popup();
+    });
+    button.add_controller(gesture);
+}
+
+fn sidebar_icon_name(location: &SidebarLocation) -> &'static str {
+    match location.label.as_str() {
+        "Home" => "user-home-symbolic",
+        "Downloads" => "folder-download-symbolic",
+        "Pictures" => "folder-pictures-symbolic",
+        _ => "folder-symbolic",
     }
 }
