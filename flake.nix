@@ -1,5 +1,5 @@
 {
-  description = "Development environment for the Iron File Iced application";
+  description = "Development environment for Iron File GUI applications";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -12,6 +12,7 @@
         let
           pkgs = import nixpkgs { inherit system; };
           runtimeLibraries = with pkgs; [
+            gtk4
             libGL
             libX11
             libXcursor
