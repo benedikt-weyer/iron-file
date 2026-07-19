@@ -1,4 +1,9 @@
-use std::{fs, path::PathBuf, process::Command};
+use std::{
+    fs,
+    path::PathBuf,
+    process::{Command, Stdio},
+    time::{Duration, Instant},
+};
 
 use iced::{
     Border, Color, Element, Font, Length, Point, Task, Theme, mouse,
@@ -55,10 +60,11 @@ struct Gui {
     active_profile: Option<PathBuf>,
     new_profile_name: String,
     color_mode: ColorMode,
-    context_folder: Option<PathBuf>,
+    context_entry: Option<ContextEntry>,
     pointer_position: Point,
     context_position: Point,
     dragging_sidebar_location: Option<PathBuf>,
+    last_entry_click: Option<(PathBuf, Instant)>,
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +86,13 @@ struct MountState {
     mounts: Vec<SystemMount>,
 }
 
+#[derive(Debug, Clone)]
+struct ContextEntry {
+    path: PathBuf,
+    is_directory: bool,
+    opener: Option<Result<String, String>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
     Browser,
@@ -93,6 +106,10 @@ enum Message {
     CancelAddressEdit,
     OpenAddress,
     OpenPath(PathBuf),
+    EntryClicked {
+        path: PathBuf,
+        is_directory: bool,
+    },
     OpenParent,
     ShowBrowser,
     ShowPreferences,
@@ -104,15 +121,25 @@ enum Message {
     BrowserLayoutSelected(BrowserLayout),
     BrowserItemSizeChanged(u16),
     PreviewToggled(bool),
-    ShowFolderContext(PathBuf),
+    SingleClickFoldersToggled(bool),
+    ShowEntryContext {
+        path: PathBuf,
+        is_directory: bool,
+    },
+    FileOpenerResolved {
+        path: PathBuf,
+        opener: Result<String, String>,
+    },
     ContextPointerMoved(Point),
     CloseFolderContext,
+    OpenContextFile,
     AddContextFolderToSidebar,
     RemoveContextFolderFromSidebar,
     SidebarPressed(PathBuf),
     SidebarReleased(PathBuf),
     MountsLoaded(Result<MountState, String>),
     MountDrive(PathBuf),
+    FileOpened(Result<(), String>),
     BrowseFinished(Result<BrowseResponse, String>),
     IconFontLoaded(Result<(), iced::font::Error>),
 }
@@ -153,10 +180,11 @@ impl Gui {
             active_profile,
             new_profile_name: String::new(),
             color_mode,
-            context_folder: None,
+            context_entry: None,
             pointer_position: Point::ORIGIN,
             context_position: Point::ORIGIN,
             dragging_sidebar_location: None,
+            last_entry_click: None,
         }
     }
 
@@ -194,6 +222,9 @@ impl Gui {
             }
             Message::OpenAddress => self.open_path(PathBuf::from(&self.address)),
             Message::OpenPath(path) => self.open_path(path),
+            Message::EntryClicked { path, is_directory } => {
+                self.handle_entry_click(path, is_directory)
+            }
             Message::OpenParent => {
                 let parent = self.directory_path.parent().map(|path| path.to_path_buf());
                 parent
@@ -246,9 +277,37 @@ impl Gui {
                 self.save_browser_settings(browser);
                 Task::none()
             }
-            Message::ShowFolderContext(path) => {
-                self.context_folder = Some(path);
+            Message::SingleClickFoldersToggled(single_click_opens_folders) => {
+                let mut browser = self.active_browser_settings();
+                browser.single_click_opens_folders = single_click_opens_folders;
+                self.save_browser_settings(browser);
+                Task::none()
+            }
+            Message::ShowEntryContext { path, is_directory } => {
+                self.context_entry = Some(ContextEntry {
+                    path: path.clone(),
+                    is_directory,
+                    opener: None,
+                });
                 self.context_position = self.pointer_position;
+                if is_directory {
+                    Task::none()
+                } else {
+                    Task::perform(default_file_opener(path.clone()), move |opener| {
+                        Message::FileOpenerResolved {
+                            path: path.clone(),
+                            opener,
+                        }
+                    })
+                }
+            }
+            Message::FileOpenerResolved { path, opener } => {
+                if let Some(context_entry) = &mut self.context_entry
+                    && !context_entry.is_directory
+                    && context_entry.path == path
+                {
+                    context_entry.opener = Some(opener);
+                }
                 Task::none()
             }
             Message::ContextPointerMoved(position) => {
@@ -256,8 +315,14 @@ impl Gui {
                 Task::none()
             }
             Message::CloseFolderContext => {
-                self.context_folder = None;
+                self.context_entry = None;
                 Task::none()
+            }
+            Message::OpenContextFile => {
+                let Some(context_entry) = self.context_entry.take() else {
+                    return Task::none();
+                };
+                Task::perform(open_file(context_entry.path), Message::FileOpened)
             }
             Message::AddContextFolderToSidebar => {
                 self.add_context_folder_to_sidebar();
@@ -285,6 +350,13 @@ impl Gui {
             Message::MountDrive(path) => {
                 self.status = format!("Mounting {}", path.display());
                 Task::perform(mount_drive(path), Message::MountsLoaded)
+            }
+            Message::FileOpened(result) => {
+                self.status = match result {
+                    Ok(()) => "Opened file".into(),
+                    Err(error) => error,
+                };
+                Task::none()
             }
             Message::BrowseFinished(result) => {
                 self.apply_response(result);
@@ -328,6 +400,32 @@ impl Gui {
             .and_then(|path| self.profiles.iter().find(|profile| profile.path == path))
             .map(|profile| profile.browser.clone())
             .unwrap_or_else(iron_file_common::config::default_browser_settings)
+    }
+
+    fn handle_entry_click(&mut self, path: PathBuf, is_directory: bool) -> Task<Message> {
+        let now = Instant::now();
+        let is_double_click =
+            self.last_entry_click
+                .as_ref()
+                .is_some_and(|(last_path, last_click)| {
+                    last_path == &path
+                        && now.duration_since(*last_click) <= Duration::from_millis(500)
+                });
+        self.last_entry_click = Some((path.clone(), now));
+
+        if is_directory {
+            if self.active_browser_settings().single_click_opens_folders || is_double_click {
+                self.last_entry_click = None;
+                self.open_path(path)
+            } else {
+                Task::none()
+            }
+        } else if is_double_click {
+            self.last_entry_click = None;
+            Task::perform(open_file(path), Message::FileOpened)
+        } else {
+            self.open_path(path)
+        }
     }
 
     fn save_browser_settings(&mut self, browser: BrowserSettings) {
@@ -448,7 +546,12 @@ impl Gui {
     }
 
     fn add_context_folder_to_sidebar(&mut self) {
-        let Some(path) = self.context_folder.take() else {
+        let Some(ContextEntry {
+            path,
+            is_directory: true,
+            ..
+        }) = self.context_entry.take()
+        else {
             return;
         };
         let mut locations = self.active_sidebar_locations();
@@ -465,7 +568,12 @@ impl Gui {
     }
 
     fn remove_context_folder_from_sidebar(&mut self) {
-        let Some(path) = self.context_folder.take() else {
+        let Some(ContextEntry {
+            path,
+            is_directory: true,
+            ..
+        }) = self.context_entry.take()
+        else {
             return;
         };
         let mut locations = self.active_sidebar_locations();
@@ -554,17 +662,32 @@ impl Gui {
                         button(row![icon, text(&entry.name)].spacing(8))
                             .style(file_item_button_style)
                             .width(Length::Fill)
-                            .on_press(Message::OpenPath(path.clone())),
+                            .on_press(Message::EntryClicked {
+                                path: path.clone(),
+                                is_directory: true,
+                            }),
                     )
-                    .on_right_press(Message::ShowFolderContext(path.clone()))
+                    .on_right_press(Message::ShowEntryContext {
+                        path: path.clone(),
+                        is_directory: true,
+                    })
                     .interaction(mouse::Interaction::Pointer),
                 )
             } else {
                 column.push(
-                    button(row![icon, text(&entry.name)].spacing(8))
-                        .style(file_item_button_style)
-                        .width(Length::Fill)
-                        .on_press(Message::OpenPath(path)),
+                    mouse_area(
+                        button(row![icon, text(&entry.name)].spacing(8))
+                            .style(file_item_button_style)
+                            .width(Length::Fill)
+                            .on_press(Message::EntryClicked {
+                                path: path.clone(),
+                                is_directory: false,
+                            }),
+                    )
+                    .on_right_press(Message::ShowEntryContext {
+                        path,
+                        is_directory: false,
+                    }),
                 )
             }
         });
@@ -602,16 +725,18 @@ impl Gui {
                                     .style(file_item_button_style)
                                     .width(Length::Fixed(tile_width))
                                     .height(Length::Fixed(tile_height))
-                                    .on_press(Message::OpenPath(path.clone()));
-                                if entry.is_directory {
-                                    row.push(
-                                        mouse_area(tile)
-                                            .on_right_press(Message::ShowFolderContext(path))
-                                            .interaction(mouse::Interaction::Pointer),
-                                    )
-                                } else {
-                                    row.push(tile)
-                                }
+                                    .on_press(Message::EntryClicked {
+                                        path: path.clone(),
+                                        is_directory: entry.is_directory,
+                                    });
+                                row.push(
+                                    mouse_area(tile)
+                                        .on_right_press(Message::ShowEntryContext {
+                                            path,
+                                            is_directory: entry.is_directory,
+                                        })
+                                        .interaction(mouse::Interaction::Pointer),
+                                )
                             });
                             column.push(tiles)
                         });
@@ -682,16 +807,31 @@ impl Gui {
         let page = container(content.spacing(12).padding(16).height(Length::Fill))
             .width(Length::Fill)
             .height(Length::Fill);
-        let overlay = self.context_folder.as_ref().map(|folder| {
-            let is_in_sidebar = self
-                .active_sidebar_locations()
-                .iter()
-                .any(|location| location.path == *folder);
-            let action = if is_in_sidebar {
-                button(text("Remove from sidebar"))
-                    .on_press(Message::RemoveContextFolderFromSidebar)
+        let overlay = self.context_entry.as_ref().map(|entry| {
+            let action: Element<'_, Message> = if entry.is_directory {
+                let is_in_sidebar = self
+                    .active_sidebar_locations()
+                    .iter()
+                    .any(|location| location.path == entry.path);
+                if is_in_sidebar {
+                    button(text("Remove from sidebar"))
+                        .on_press(Message::RemoveContextFolderFromSidebar)
+                        .into()
+                } else {
+                    button(text("Add to sidebar"))
+                        .on_press(Message::AddContextFolderToSidebar)
+                        .into()
+                }
             } else {
-                button(text("Add to sidebar")).on_press(Message::AddContextFolderToSidebar)
+                match &entry.opener {
+                    Some(Ok(application)) => button(text(format!("Open (with {application})")))
+                        .on_press(Message::OpenContextFile)
+                        .into(),
+                    Some(Err(_)) => button(text("Open"))
+                        .on_press(Message::OpenContextFile)
+                        .into(),
+                    None => text("Finding default application...").into(),
+                }
             };
             let menu = container(
                 row![
@@ -937,6 +1077,9 @@ impl Gui {
             toggler(browser.preview_enabled)
                 .label("Show preview pane")
                 .on_toggle(Message::PreviewToggled),
+            toggler(browser.single_click_opens_folders)
+                .label("Open folders with one click")
+                .on_toggle(Message::SingleClickFoldersToggled),
         ]
         .spacing(10);
         let profiles = self
@@ -1152,6 +1295,89 @@ async fn mount_drive(path: PathBuf) -> Result<MountState, String> {
         let _ = path;
         Err("Mounting drives is not supported on this platform".into())
     }
+}
+
+async fn open_file(path: PathBuf) -> Result<(), String> {
+    let status = Command::new("xdg-open")
+        .arg(&path)
+        .status()
+        .map_err(|error| format!("Could not open {}: {error}", path.display()))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("xdg-open could not open {}", path.display()))
+    }
+}
+
+async fn default_file_opener(path: PathBuf) -> Result<String, String> {
+    let mime_output = Command::new("file")
+        .args(["--mime-type", "-b"])
+        .arg(&path)
+        .output()
+        .map_err(|error| {
+            format!(
+                "Could not determine the type of {}: {error}",
+                path.display()
+            )
+        })?;
+    if !mime_output.status.success() {
+        return Err(format!(
+            "Could not determine the type of {}",
+            path.display()
+        ));
+    }
+    let mime = String::from_utf8_lossy(&mime_output.stdout)
+        .trim()
+        .to_owned();
+    if mime.is_empty() {
+        return Err(format!("No MIME type was returned for {}", path.display()));
+    }
+
+    let application_output = Command::new("xdg-mime")
+        .args(["query", "default", &mime])
+        .output()
+        .map_err(|error| format!("Could not find an application for {mime}: {error}"))?;
+    if !application_output.status.success() {
+        return Err(format!("Could not find an application for {mime}"));
+    }
+    let application = String::from_utf8_lossy(&application_output.stdout)
+        .trim()
+        .to_owned();
+    if application.is_empty() {
+        Err(format!("No default application is configured for {mime}"))
+    } else {
+        Ok(desktop_entry_name(&application).unwrap_or(application))
+    }
+}
+
+fn desktop_entry_name(application: &str) -> Option<String> {
+    let home = std::env::var_os("HOME")?;
+    let user = std::env::var_os("USER")?;
+    let output = Command::new("find")
+        .arg(PathBuf::from(&home).join(".local/share/applications"))
+        .arg(PathBuf::from(&home).join(".nix-profile/share/applications"))
+        .arg(
+            PathBuf::from("/etc/profiles/per-user")
+                .join(user)
+                .join("share/applications"),
+        )
+        .arg("/run/current-system/sw/share/applications")
+        .args([
+            "-name",
+            application,
+            "-exec",
+            "awk",
+            "-F=",
+            "/^Name=/{print substr($0,6); exit}",
+            "{}",
+            ";",
+            "-quit",
+        ])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (!name.is_empty()).then_some(name)
 }
 
 #[cfg(target_os = "linux")]

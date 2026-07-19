@@ -10,6 +10,7 @@ dark_highlight = "#85b7eb"
 item_size = 32
 layout = "list"
 preview_enabled = false
+single_click_opens_folders = false
 
 [[sidebar_locations]]
 label = "Home"

@@ -62,8 +62,10 @@ pub enum BrowserLayout {
 pub struct BrowserSettings {
     pub item_size: u16,
     pub layout: BrowserLayout,
-    #[serde(default)]
+    #[serde(default = "default_preview_enabled")]
     pub preview_enabled: bool,
+    #[serde(default = "default_single_click_opens_folders")]
+    pub single_click_opens_folders: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -419,6 +421,14 @@ pub fn default_browser_settings() -> BrowserSettings {
         .expect("default profile must define browser")
 }
 
+fn default_single_click_opens_folders() -> bool {
+    default_browser_settings().single_click_opens_folders
+}
+
+fn default_preview_enabled() -> bool {
+    default_browser_settings().preview_enabled
+}
+
 fn default_profile_file() -> ProfileFile {
     toml::from_str(DEFAULT_PROFILE_TOML).expect("default profile must be valid TOML")
 }
@@ -545,6 +555,25 @@ mod tests {
             fs::read_to_string(&profile.path)
                 .unwrap()
                 .contains("color_mode = \"day\"")
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn saves_browser_click_mode() {
+        let directory = test_directory();
+        let store = ConfigStore::with_paths(directory.join("user"), vec![]);
+        let profile = store.create_profile("Click mode").unwrap();
+        let mut browser = profile.browser.clone();
+        browser.single_click_opens_folders = true;
+
+        let saved = store.save_browser_settings(&profile, browser).unwrap();
+
+        assert!(saved.browser.single_click_opens_folders);
+        assert!(
+            fs::read_to_string(&profile.path)
+                .unwrap()
+                .contains("single_click_opens_folders = true")
         );
         fs::remove_dir_all(directory).unwrap();
     }
