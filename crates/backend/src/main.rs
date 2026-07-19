@@ -2,33 +2,86 @@ use std::{
     fs::{File, OpenOptions},
     io,
     path::{Path, PathBuf},
+    pin::Pin,
 };
 
 use fs2::FileExt;
 use iron_file_common::{backend_lock_path, proto, socket_path};
-use tokio::net::{UnixListener, UnixStream};
-use tokio_stream::wrappers::UnixListenerStream;
+use tokio::{
+    net::{UnixListener, UnixStream},
+    sync::{broadcast, mpsc},
+};
+use tokio_stream::{
+    Stream,
+    wrappers::{ReceiverStream, UnixListenerStream},
+};
 use tonic::{Request, Response, Status, transport::Server};
 
 use proto::{
-    BrowseResponse, BrowserError, Directory, FileContent, FileEntry, OpenPathRequest,
+    BrowseResponse, BrowserError, Directory, FileContent, FileEntry, LogEntry, LogStreamRequest,
+    OpenPathRequest,
     browse_response::Payload,
     file_browser_server::{FileBrowser, FileBrowserServer},
 };
 
 const MAX_PREVIEW_BYTES: u64 = 1_000_000;
 
-#[derive(Default)]
-struct FileBrowserService;
+#[derive(Clone)]
+struct FileBrowserService {
+    logs: broadcast::Sender<String>,
+}
 
 #[tonic::async_trait]
 impl FileBrowser for FileBrowserService {
+    type StreamLogsStream = Pin<Box<dyn Stream<Item = Result<LogEntry, Status>> + Send>>;
+
     async fn open_path(
         &self,
         request: Request<OpenPathRequest>,
     ) -> Result<Response<BrowseResponse>, Status> {
         let path = PathBuf::from(request.into_inner().path);
-        Ok(Response::new(browse(path)))
+        self.log(format!("Opening {}", path.display()));
+        let response = browse(path);
+        if let Some(Payload::Error(error)) = &response.payload {
+            self.log(format!("Request failed: {}", error.message));
+        }
+        Ok(Response::new(response))
+    }
+
+    async fn stream_logs(
+        &self,
+        _: Request<LogStreamRequest>,
+    ) -> Result<Response<Self::StreamLogsStream>, Status> {
+        let mut logs = self.logs.subscribe();
+        let (sender, receiver) = mpsc::channel(128);
+        tokio::spawn(async move {
+            loop {
+                match logs.recv().await {
+                    Ok(message) => {
+                        if sender.send(Ok(LogEntry { message })).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(count)) => {
+                        let message = format!("Skipped {count} backend log messages");
+                        if sender.send(Ok(LogEntry { message })).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+        self.log("Frontend subscribed to backend logs");
+        Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
+    }
+}
+
+impl FileBrowserService {
+    fn log(&self, message: impl Into<String>) {
+        let message = message.into();
+        eprintln!("{message}");
+        let _ = self.logs.send(message);
     }
 }
 
@@ -37,10 +90,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let socket = socket_path();
     let _lock = acquire_singleton_lock(&socket)?;
     let listener = bind_singleton_socket(&socket).await?;
-    eprintln!("iron-file backend listening on {}", socket.display());
+    let (logs, _) = broadcast::channel(256);
+    let service = FileBrowserService { logs };
+    service.log(format!(
+        "iron-file backend listening on {}",
+        socket.display()
+    ));
 
     Server::builder()
-        .add_service(FileBrowserServer::new(FileBrowserService))
+        .add_service(FileBrowserServer::new(service))
         .serve_with_incoming(UnixListenerStream::new(listener))
         .await?;
 

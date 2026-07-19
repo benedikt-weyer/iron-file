@@ -4,6 +4,13 @@ package ironfile.v1;
 
 service FileBrowser {
   rpc OpenPath(OpenPathRequest) returns (BrowseResponse);
+  rpc StreamLogs(LogStreamRequest) returns (stream LogEntry);
+}
+
+message LogStreamRequest {}
+
+message LogEntry {
+  string message = 1;
 }
 
 message OpenPathRequest {

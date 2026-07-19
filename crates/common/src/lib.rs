@@ -22,7 +22,7 @@ pub mod proto {
     tonic::include_proto!("ironfile.v1");
 }
 
-use proto::{OpenPathRequest, file_browser_client::FileBrowserClient};
+use proto::{LogStreamRequest, OpenPathRequest, file_browser_client::FileBrowserClient};
 
 const BACKEND_MODE_ENV: &str = "IRON_FILE_BACKEND_MODE";
 const BACKEND_BIN_ENV: &str = "IRON_FILE_BACKEND_BIN";
@@ -66,6 +66,19 @@ pub async fn browse(path: PathBuf) -> Result<proto::BrowseResponse, String> {
 
 pub async fn ensure_backend() -> Result<(), String> {
     connect_or_start().await.map(|_| ())
+}
+
+pub async fn pipe_backend_logs() -> Result<(), String> {
+    let mut client = connect_or_start().await?;
+    let mut logs = client
+        .stream_logs(Request::new(LogStreamRequest {}))
+        .await
+        .map_err(|error| error.to_string())?
+        .into_inner();
+    while let Some(entry) = logs.message().await.map_err(|error| error.to_string())? {
+        println!("[iron-file backend] {}", entry.message);
+    }
+    Err("The backend log stream ended".into())
 }
 
 async fn connect_or_start() -> Result<FileBrowserClient<tonic::transport::Channel>, String> {

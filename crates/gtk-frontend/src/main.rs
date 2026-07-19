@@ -16,7 +16,7 @@ use gtk4::{
 use iron_file_common::{
     browse,
     config::{ConfigStore, Profile, SidebarLocation},
-    ensure_backend, proto,
+    ensure_backend, pipe_backend_logs, proto,
 };
 use proto::{BrowseResponse, browse_response::Payload};
 use tokio::runtime::Runtime;
@@ -31,6 +31,13 @@ fn main() {
     if let Ok(runtime) = Runtime::new() {
         let _ = runtime.block_on(ensure_backend());
     }
+    thread::spawn(|| {
+        if let Ok(runtime) = Runtime::new()
+            && let Err(error) = runtime.block_on(pipe_backend_logs())
+        {
+            eprintln!("Backend log stream stopped: {error}");
+        }
+    });
     let (response_sender, response_receiver) = mpsc::channel();
     let response_receiver = Rc::new(RefCell::new(Some(response_receiver)));
     let app = Application::builder()

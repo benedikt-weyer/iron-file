@@ -16,7 +16,7 @@ use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{
     browse,
     config::{BrowserLayout, BrowserSettings, ColorMode, ConfigStore, Profile, SidebarLocation},
-    ensure_backend, proto,
+    ensure_backend, pipe_backend_logs, proto,
 };
 use proto::{BrowseResponse, browse_response::Payload};
 use serde::Deserialize;
@@ -143,6 +143,7 @@ enum Message {
     MountDrive(PathBuf),
     FileOpened(Result<(), String>),
     TerminalOpened(Result<(), String>),
+    BackendLogPipeEnded(Result<(), String>),
     BrowseFinished(Result<BrowseResponse, String>),
     IconFontLoaded(Result<(), iced::font::Error>),
 }
@@ -204,6 +205,10 @@ impl Gui {
                 .chain(std::iter::once(Task::perform(
                     load_mounts(),
                     Message::MountsLoaded,
+                )))
+                .chain(std::iter::once(Task::perform(
+                    pipe_backend_logs(),
+                    Message::BackendLogPipeEnded,
                 ))),
         )
     }
@@ -386,6 +391,11 @@ impl Gui {
                 };
                 Task::none()
             }
+            Message::BackendLogPipeEnded(Err(error)) => {
+                self.status = format!("Backend log stream stopped: {error}");
+                Task::none()
+            }
+            Message::BackendLogPipeEnded(Ok(())) => Task::none(),
             Message::BrowseFinished(result) => {
                 self.apply_response(result);
                 Task::none()
