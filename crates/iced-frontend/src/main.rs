@@ -5,7 +5,11 @@ use iced::{
     widget::{button, column, container, radio, row, scrollable, text, text_input, tooltip},
 };
 use iconflow::{Pack, Size, Style, fonts, try_icon};
-use iron_file_common::{browse, ensure_backend, proto};
+use iron_file_common::{
+    browse,
+    config::{ColorMode, ConfigStore, Profile},
+    ensure_backend, proto,
+};
 use proto::{BrowseResponse, browse_response::Payload};
 use tokio::runtime::Runtime;
 
@@ -39,6 +43,10 @@ struct Gui {
     content: String,
     status: String,
     view: View,
+    config_store: ConfigStore,
+    profiles: Vec<Profile>,
+    active_profile: Option<PathBuf>,
+    new_profile_name: String,
     color_mode: ColorMode,
 }
 
@@ -46,13 +54,6 @@ struct Gui {
 enum View {
     Browser,
     Preferences,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ColorMode {
-    Day,
-    Night,
-    System,
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +64,9 @@ enum Message {
     OpenParent,
     ShowBrowser,
     ShowPreferences,
+    SelectProfile(PathBuf),
+    NewProfileNameChanged(String),
+    CreateProfile,
     ColorModeSelected(ColorMode),
     BrowseFinished(Result<BrowseResponse, String>),
     IconFontLoaded(Result<(), iced::font::Error>),
@@ -71,6 +75,24 @@ enum Message {
 impl Gui {
     fn new() -> Self {
         let directory_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let config_store = ConfigStore::from_environment();
+        let mut profiles = config_store.profiles().unwrap_or_default();
+        if profiles.is_empty() {
+            if let Ok(profile) = config_store.create_profile("Default") {
+                profiles.push(profile);
+            }
+        }
+        let active_profile = config_store
+            .active_profile()
+            .ok()
+            .flatten()
+            .filter(|path| profiles.iter().any(|profile| &profile.path == path))
+            .or_else(|| profiles.first().map(|profile| profile.path.clone()));
+        let color_mode = active_profile
+            .as_deref()
+            .and_then(|path| profiles.iter().find(|profile| profile.path == path))
+            .map(|profile| profile.color_mode)
+            .unwrap_or_default();
         Self {
             address: directory_path.display().to_string(),
             directory_path,
@@ -78,7 +100,11 @@ impl Gui {
             content: String::new(),
             status: "Connecting to backend".into(),
             view: View::Browser,
-            color_mode: ColorMode::System,
+            config_store,
+            profiles,
+            active_profile,
+            new_profile_name: String::new(),
+            color_mode,
         }
     }
 
@@ -117,8 +143,20 @@ impl Gui {
                 self.view = View::Preferences;
                 Task::none()
             }
+            Message::SelectProfile(path) => {
+                self.select_profile(path);
+                Task::none()
+            }
+            Message::NewProfileNameChanged(name) => {
+                self.new_profile_name = name;
+                Task::none()
+            }
+            Message::CreateProfile => {
+                self.create_profile();
+                Task::none()
+            }
             Message::ColorModeSelected(color_mode) => {
-                self.color_mode = color_mode;
+                self.save_color_mode(color_mode);
                 Task::none()
             }
             Message::BrowseFinished(result) => {
@@ -134,6 +172,64 @@ impl Gui {
             ColorMode::Day => Theme::Light,
             ColorMode::Night => Theme::Dark,
             ColorMode::System => Theme::default(),
+        }
+    }
+
+    fn select_profile(&mut self, path: PathBuf) {
+        let Some(profile) = self.profiles.iter().find(|profile| profile.path == path) else {
+            return;
+        };
+        self.active_profile = Some(path.clone());
+        self.color_mode = profile.color_mode;
+        if let Err(error) = self.config_store.set_active_profile(&path) {
+            self.status = error;
+        }
+    }
+
+    fn create_profile(&mut self) {
+        match self.config_store.create_profile(&self.new_profile_name) {
+            Ok(profile) => {
+                let path = profile.path.clone();
+                self.profiles.push(profile);
+                self.profiles
+                    .sort_by(|left, right| left.name.cmp(&right.name));
+                self.new_profile_name.clear();
+                self.select_profile(path);
+            }
+            Err(error) => self.status = error,
+        }
+    }
+
+    fn save_color_mode(&mut self, color_mode: ColorMode) {
+        let Some(path) = self.active_profile.clone() else {
+            self.status = "No active configuration profile".into();
+            return;
+        };
+        let Some(profile) = self.profiles.iter().find(|profile| profile.path == path) else {
+            self.status = "The active configuration profile is unavailable".into();
+            return;
+        };
+        match self.config_store.save_color_mode(profile, color_mode) {
+            Ok(saved_profile) => {
+                let saved_path = saved_profile.path.clone();
+                if let Some(index) = self
+                    .profiles
+                    .iter()
+                    .position(|profile| profile.path == saved_path)
+                {
+                    self.profiles[index] = saved_profile;
+                } else {
+                    self.profiles.push(saved_profile);
+                    self.profiles
+                        .sort_by(|left, right| left.name.cmp(&right.name));
+                }
+                self.active_profile = Some(saved_path.clone());
+                self.color_mode = color_mode;
+                if let Err(error) = self.config_store.set_active_profile(&saved_path) {
+                    self.status = error;
+                }
+            }
+            Err(error) => self.status = error,
         }
     }
 
@@ -257,11 +353,61 @@ impl Gui {
             ),
         ]
         .spacing(12);
+        let profiles = self
+            .profiles
+            .iter()
+            .fold(column![].spacing(6), |column, profile| {
+                let selected = self.active_profile.as_deref() == Some(profile.path.as_path());
+                let label = if selected {
+                    format!("{} (active)", profile.name)
+                } else {
+                    profile.name.clone()
+                };
+                let profile_button = if profile.read_only {
+                    button(
+                        row![
+                            text(label),
+                            tooltip(
+                                icon_text("lock").size(16),
+                                text("Read-only profile"),
+                                tooltip::Position::Right,
+                            ),
+                        ]
+                        .spacing(8),
+                    )
+                } else {
+                    button(row![text(label)].spacing(8))
+                }
+                .width(Length::Fill)
+                .on_press(Message::SelectProfile(profile.path.clone()));
+                column.push(profile_button)
+            });
+        let create_profile = row![
+            text_input("New profile name", &self.new_profile_name)
+                .on_input(Message::NewProfileNameChanged)
+                .on_submit(Message::CreateProfile)
+                .width(Length::Fill),
+            tooltip(
+                button(icon_text("plus")).on_press(Message::CreateProfile),
+                text("Create profile"),
+                tooltip::Position::Bottom,
+            ),
+        ]
+        .spacing(8);
+        let search_paths = self
+            .config_store
+            .search_paths()
+            .iter()
+            .fold(column![].spacing(4), |column, path| {
+                column.push(text(path.display().to_string()))
+            });
 
         container(
             column![
                 row![back_button, text("Preferences").size(24)].spacing(12),
+                column![text("Profiles").size(18), profiles, create_profile].spacing(10),
                 column![text("Color mode").size(18), options].spacing(10),
+                column![text("Configuration search paths").size(18), search_paths].spacing(10),
             ]
             .spacing(28)
             .padding(16)

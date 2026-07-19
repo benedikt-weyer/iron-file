@@ -8,9 +8,11 @@ license.workspace = true
 fs2 = "0.4"
 hyper-util = { version = "0.1", features = ["tokio"] }
 prost = "0.14"
+serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["net", "time"] }
 tonic = { version = "0.14", features = ["transport"] }
 tonic-prost = "0.14"
+toml = "0.8"
 tower = { version = "0.5", features = ["util"] }
 
 [build-dependencies]

@@ -7,6 +7,8 @@ use std::{
     time::Duration,
 };
 
+pub mod config;
+
 use fs2::FileExt;
 use hyper_util::rt::TokioIo;
 use tokio::{net::UnixStream, time::sleep};
