@@ -2064,6 +2064,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "iconflow"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdea0c209457d8685cf6f1aae4eabc71d69f3c6ee6bb1fab0861a52251763936"
+
+[[package]]
 name = "indexmap"
 version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2124,6 +2130,7 @@ name = "iron-file-iced"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "iconflow",
  "iron-file-common",
  "tokio",
 ]

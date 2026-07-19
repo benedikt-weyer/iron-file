@@ -8,8 +8,8 @@ use std::{
 };
 
 use gtk4::{
-    Application, ApplicationWindow, Button, Entry, Label, ListBox, Orientation, ScrolledWindow,
-    TextView,
+    Application, ApplicationWindow, Button, Entry, Image, Label, ListBox, Orientation,
+    ScrolledWindow, TextView,
     glib::{self, ControlFlow},
     prelude::*,
 };
@@ -44,8 +44,10 @@ fn build_ui(
     let address = Entry::new();
     let initial_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     address.set_text(&initial_path.display().to_string());
-    let open_button = Button::with_label("Open");
-    let up_button = Button::with_label("Up");
+    let open_button = Button::from_icon_name("folder-open-symbolic");
+    open_button.set_tooltip_text(Some("Open path"));
+    let up_button = Button::from_icon_name("go-up-symbolic");
+    up_button.set_tooltip_text(Some("Parent folder"));
     let file_list = ListBox::new();
     let content_view = TextView::new();
     content_view.set_editable(false);
@@ -202,12 +204,18 @@ fn replace_entries(
         list.remove(&child);
     }
     for entry in entries {
-        let prefix = if entry.is_directory {
-            "[Folder] "
+        let icon_name = if entry.is_directory {
+            "folder-symbolic"
         } else {
-            "[File] "
+            "text-x-generic-symbolic"
         };
-        let button = Button::with_label(&format!("{prefix}{}", entry.name));
+        let row = gtk4::Box::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(8)
+            .build();
+        row.append(&Image::from_icon_name(icon_name));
+        row.append(&Label::new(Some(&entry.name)));
+        let button = Button::builder().child(&row).build();
         let entry_sender = sender.clone();
         button.connect_clicked(move |_| request_path(&entry_sender, PathBuf::from(&entry.path)));
         list.append(&button);

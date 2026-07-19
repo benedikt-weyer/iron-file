@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 
 use iced::{
-    Element, Length, Task,
-    widget::{button, column, container, row, scrollable, text, text_input},
+    Element, Font, Length, Task,
+    widget::{button, column, container, row, scrollable, text, text_input, tooltip},
 };
+use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{browse, ensure_backend, proto};
 use proto::{BrowseResponse, browse_response::Payload};
 use tokio::runtime::Runtime;
@@ -45,6 +46,7 @@ enum Message {
     OpenPath(PathBuf),
     OpenParent,
     BrowseFinished(Result<BrowseResponse, String>),
+    IconFontLoaded(Result<(), iced::font::Error>),
 }
 
 impl Gui {
@@ -61,7 +63,15 @@ impl Gui {
 
     fn load_initial_directory() -> Task<Message> {
         let path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        Task::perform(browse(path), Message::BrowseFinished)
+        Task::batch(
+            fonts()
+                .iter()
+                .map(|font| iced::font::load(font.bytes).map(Message::IconFontLoaded))
+                .chain(std::iter::once(Task::perform(
+                    browse(path),
+                    Message::BrowseFinished,
+                ))),
+        )
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -82,6 +92,7 @@ impl Gui {
                 self.apply_response(result);
                 Task::none()
             }
+            Message::IconFontLoaded(_) => Task::none(),
         }
     }
 
@@ -119,25 +130,33 @@ impl Gui {
 
     fn view(&self) -> Element<'_, Message> {
         let entries = self.entries.iter().fold(column![], |column, entry| {
-            let prefix = if entry.is_directory {
-                "[Folder] "
+            let icon = if entry.is_directory {
+                icon_text("folder")
             } else {
-                "[File] "
+                icon_text("file")
             };
             column.push(
-                button(text(format!("{prefix}{}", entry.name)))
+                button(row![icon, text(&entry.name)].spacing(8))
                     .width(Length::Fill)
                     .on_press(Message::OpenPath(PathBuf::from(&entry.path))),
             )
         });
 
         let address_bar = row![
-            button("Up").on_press(Message::OpenParent),
+            tooltip(
+                button(icon_text("folder-up")).on_press(Message::OpenParent),
+                text("Parent folder"),
+                tooltip::Position::Bottom,
+            ),
             text_input("Path", &self.address)
                 .on_input(Message::AddressChanged)
                 .on_submit(Message::OpenAddress)
                 .width(Length::Fill),
-            button("Open").on_press(Message::OpenAddress),
+            tooltip(
+                button(icon_text("folder-open")).on_press(Message::OpenAddress),
+                text("Open path"),
+                tooltip::Position::Bottom,
+            ),
         ]
         .spacing(8);
         let browser = row![
@@ -157,4 +176,14 @@ impl Gui {
         .height(Length::Fill)
         .into()
     }
+}
+
+fn icon_text(name: &str) -> iced::widget::Text<'static> {
+    let icon = try_icon(Pack::Lucide, name, Style::Regular, Size::Regular)
+        .expect("missing bundled Lucide icon");
+    let glyph = char::from_u32(icon.codepoint).unwrap_or('?');
+
+    text(glyph.to_string())
+        .size(18)
+        .font(Font::with_name(icon.family))
 }
