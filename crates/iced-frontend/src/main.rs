@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, process::Command};
 
 use iced::{
     Border, Color, Element, Font, Length, Point, Task, Theme, mouse,
@@ -14,6 +14,7 @@ use iron_file_common::{
     ensure_backend, proto,
 };
 use proto::{BrowseResponse, browse_response::Payload};
+use serde::Deserialize;
 use tokio::runtime::Runtime;
 
 fn main() -> iced::Result {
@@ -43,6 +44,7 @@ struct Gui {
     directory_path: PathBuf,
     address: String,
     entries: Vec<proto::FileEntry>,
+    drives: Vec<Drive>,
     content: String,
     status: String,
     editing_address: bool,
@@ -56,6 +58,13 @@ struct Gui {
     pointer_position: Point,
     context_position: Point,
     dragging_sidebar_location: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct Drive {
+    path: PathBuf,
+    name: String,
+    mount_point: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +95,8 @@ enum Message {
     RemoveContextFolderFromSidebar,
     SidebarPressed(PathBuf),
     SidebarReleased(PathBuf),
+    DrivesLoaded(Result<Vec<Drive>, String>),
+    MountDrive(PathBuf),
     BrowseFinished(Result<BrowseResponse, String>),
     IconFontLoaded(Result<(), iced::font::Error>),
 }
@@ -115,6 +126,7 @@ impl Gui {
             address: directory_path.display().to_string(),
             directory_path,
             entries: Vec::new(),
+            drives: Vec::new(),
             content: String::new(),
             status: "Connecting to backend".into(),
             editing_address: false,
@@ -140,6 +152,10 @@ impl Gui {
                 .chain(std::iter::once(Task::perform(
                     browse(path),
                     Message::BrowseFinished,
+                )))
+                .chain(std::iter::once(Task::perform(
+                    load_drives(),
+                    Message::DrivesLoaded,
                 ))),
         )
     }
@@ -221,6 +237,17 @@ impl Gui {
                 Task::none()
             }
             Message::SidebarReleased(path) => self.release_sidebar_location(path),
+            Message::DrivesLoaded(result) => {
+                match result {
+                    Ok(drives) => self.drives = drives,
+                    Err(error) => self.status = error,
+                }
+                Task::none()
+            }
+            Message::MountDrive(path) => {
+                self.status = format!("Mounting {}", path.display());
+                Task::perform(mount_drive(path), Message::DrivesLoaded)
+            }
             Message::BrowseFinished(result) => {
                 self.apply_response(result);
                 Task::none()
@@ -674,7 +701,40 @@ impl Gui {
                 )
             },
         );
-        container(scrollable(locations))
+        let drives = self.drives.iter().fold(
+            column![text("Drives").size(16)].spacing(6),
+            |column, drive| {
+                let label = if let Some(mount_point) = &drive.mount_point {
+                    format!("{} ({})", drive.name, mount_point.display())
+                } else {
+                    drive.name.clone()
+                };
+                let item = row![icon_text("hard-drive"), text(label)].spacing(8);
+                if let Some(mount_point) = &drive.mount_point {
+                    column.push(
+                        button(item)
+                            .style(iced::widget::button::text)
+                            .width(Length::Fill)
+                            .on_press(Message::OpenPath(mount_point.clone())),
+                    )
+                } else {
+                    column.push(
+                        row![
+                            container(item).width(Length::Fill),
+                            tooltip(
+                                button(icon_text("plug-zap"))
+                                    .on_press(Message::MountDrive(drive.path.clone())),
+                                text("Mount drive"),
+                                tooltip::Position::Right,
+                            ),
+                        ]
+                        .spacing(4),
+                    )
+                }
+            },
+        );
+        let sidebar_content = column![locations, drives].spacing(20);
+        container(scrollable(sidebar_content))
             .width(Length::Fixed(180.0))
             .height(Length::Fill)
             .into()
@@ -813,4 +873,88 @@ fn parse_color(value: &str) -> Option<Color> {
     let green = u8::from_str_radix(&value[2..4], 16).ok()?;
     let blue = u8::from_str_radix(&value[4..6], 16).ok()?;
     Some(Color::from_rgb8(red, green, blue))
+}
+
+#[derive(Debug, Deserialize)]
+struct LsblkOutput {
+    #[serde(default)]
+    blockdevices: Vec<LsblkDevice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LsblkDevice {
+    name: String,
+    path: Option<PathBuf>,
+    label: Option<String>,
+    #[serde(default)]
+    mountpoints: Vec<Option<PathBuf>>,
+    #[serde(default)]
+    children: Vec<LsblkDevice>,
+    #[serde(rename = "type")]
+    device_type: String,
+}
+
+async fn load_drives() -> Result<Vec<Drive>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        let output = Command::new("lsblk")
+            .args(["--json", "--output", "NAME,PATH,LABEL,MOUNTPOINTS,TYPE"])
+            .output()
+            .map_err(|error| format!("Could not list drives: {error}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+        }
+        let output: LsblkOutput = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("Could not read drive list: {error}"))?;
+        let mut drives = Vec::new();
+        for device in output.blockdevices {
+            collect_drives(device, &mut drives);
+        }
+        Ok(drives)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn collect_drives(device: LsblkDevice, drives: &mut Vec<Drive>) {
+    let is_volume = matches!(device.device_type.as_str(), "disk" | "part")
+        && (device.device_type == "part" || device.children.is_empty());
+    if is_volume {
+        if let Some(path) = device.path {
+            let mount_point = device.mountpoints.into_iter().flatten().next();
+            drives.push(Drive {
+                path,
+                name: device.label.unwrap_or(device.name),
+                mount_point,
+            });
+        }
+    }
+    for child in device.children {
+        collect_drives(child, drives);
+    }
+}
+
+async fn mount_drive(path: PathBuf) -> Result<Vec<Drive>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        let output = Command::new("udisksctl")
+            .args(["mount", "--block"])
+            .arg(&path)
+            .output()
+            .map_err(|error| format!("Could not mount {}: {error}", path.display()))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+        }
+        load_drives().await
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        Err("Mounting drives is not supported on this platform".into())
+    }
 }
