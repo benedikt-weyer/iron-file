@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
@@ -122,6 +122,7 @@ enum Message {
     BrowserItemSizeChanged(u16),
     PreviewToggled(bool),
     SingleClickFoldersToggled(bool),
+    TerminalCommandChanged(String),
     ShowEntryContext {
         path: PathBuf,
         is_directory: bool,
@@ -133,6 +134,7 @@ enum Message {
     ContextPointerMoved(Point),
     CloseFolderContext,
     OpenContextFile,
+    OpenTerminalHere,
     AddContextFolderToSidebar,
     RemoveContextFolderFromSidebar,
     SidebarPressed(PathBuf),
@@ -140,6 +142,7 @@ enum Message {
     MountsLoaded(Result<MountState, String>),
     MountDrive(PathBuf),
     FileOpened(Result<(), String>),
+    TerminalOpened(Result<(), String>),
     BrowseFinished(Result<BrowseResponse, String>),
     IconFontLoaded(Result<(), iced::font::Error>),
 }
@@ -283,6 +286,12 @@ impl Gui {
                 self.save_browser_settings(browser);
                 Task::none()
             }
+            Message::TerminalCommandChanged(terminal_command) => {
+                let mut browser = self.active_browser_settings();
+                browser.terminal_command = terminal_command;
+                self.save_browser_settings(browser);
+                Task::none()
+            }
             Message::ShowEntryContext { path, is_directory } => {
                 self.context_entry = Some(ContextEntry {
                     path: path.clone(),
@@ -324,6 +333,18 @@ impl Gui {
                 };
                 Task::perform(open_file(context_entry.path), Message::FileOpened)
             }
+            Message::OpenTerminalHere => {
+                let Some(ContextEntry {
+                    path,
+                    is_directory: true,
+                    ..
+                }) = self.context_entry.take()
+                else {
+                    return Task::none();
+                };
+                let command = self.active_browser_settings().terminal_command;
+                Task::perform(open_terminal(path, command), Message::TerminalOpened)
+            }
             Message::AddContextFolderToSidebar => {
                 self.add_context_folder_to_sidebar();
                 Task::none()
@@ -354,6 +375,13 @@ impl Gui {
             Message::FileOpened(result) => {
                 self.status = match result {
                     Ok(()) => "Opened file".into(),
+                    Err(error) => error,
+                };
+                Task::none()
+            }
+            Message::TerminalOpened(result) => {
+                self.status = match result {
+                    Ok(()) => "Opened terminal".into(),
                     Err(error) => error,
                 };
                 Task::none()
@@ -798,6 +826,10 @@ impl Gui {
                 .height(Length::Fill)
                 .into()
         };
+        let browser = mouse_area(browser).on_right_press(Message::ShowEntryContext {
+            path: self.directory_path.clone(),
+            is_directory: true,
+        });
         let main_content = row![self.sidebar_view(), browser]
             .spacing(16)
             .width(Length::Fill)
@@ -815,36 +847,37 @@ impl Gui {
                     .any(|location| location.path == entry.path);
                 if is_in_sidebar {
                     button(text("Remove from sidebar"))
+                        .width(Length::Fill)
                         .on_press(Message::RemoveContextFolderFromSidebar)
                         .into()
                 } else {
                     button(text("Add to sidebar"))
+                        .width(Length::Fill)
                         .on_press(Message::AddContextFolderToSidebar)
                         .into()
                 }
             } else {
                 match &entry.opener {
                     Some(Ok(application)) => button(text(format!("Open (with {application})")))
+                        .width(Length::Fill)
                         .on_press(Message::OpenContextFile)
                         .into(),
                     Some(Err(_)) => button(text("Open"))
+                        .width(Length::Fill)
                         .on_press(Message::OpenContextFile)
                         .into(),
                     None => text("Finding default application...").into(),
                 }
             };
-            let menu = container(
-                row![
-                    action,
-                    tooltip(
-                        button(icon_text("x")).on_press(Message::CloseFolderContext),
-                        text("Close menu"),
-                        tooltip::Position::Bottom,
-                    ),
-                ]
-                .spacing(8),
-            )
-            .padding(8);
+            let mut actions = column![action].spacing(4);
+            if entry.is_directory {
+                actions = actions.push(
+                    button(text("Open terminal here"))
+                        .width(Length::Fill)
+                        .on_press(Message::OpenTerminalHere),
+                );
+            }
+            let menu = container(actions).padding(8);
             let menu_position = container(column![
                 Space::with_height(self.context_position.y),
                 row![Space::with_width(self.context_position.x), menu],
@@ -853,7 +886,8 @@ impl Gui {
             .height(Length::Fill);
             stack![
                 mouse_area(Space::new(Length::Fill, Length::Fill))
-                    .on_press(Message::CloseFolderContext),
+                    .on_press(Message::CloseFolderContext)
+                    .on_right_press(Message::CloseFolderContext),
                 menu_position,
             ]
             .width(Length::Fill)
@@ -1080,6 +1114,9 @@ impl Gui {
             toggler(browser.single_click_opens_folders)
                 .label("Open folders with one click")
                 .on_toggle(Message::SingleClickFoldersToggled),
+            text_input("Terminal command", &browser.terminal_command)
+                .on_input(Message::TerminalCommandChanged)
+                .width(Length::Fill),
         ]
         .spacing(10);
         let profiles = self
@@ -1307,6 +1344,86 @@ async fn open_file(path: PathBuf) -> Result<(), String> {
     } else {
         Err(format!("xdg-open could not open {}", path.display()))
     }
+}
+
+async fn open_terminal(path: PathBuf, configured_command: String) -> Result<(), String> {
+    let command = configured_command.trim();
+    if !command.is_empty() && command != "default" {
+        return spawn_terminal_command(command, &path);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(command) = gnome_default_terminal_command() {
+            return spawn_terminal_command(&command, &path);
+        }
+        Command::new("xdg-terminal-exec")
+            .arg("--working-directory")
+            .arg(&path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("Could not open a terminal in {}: {error}", path.display()))
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .args(["-a", "Terminal"])
+            .arg(&path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("Could not open Terminal in {}: {error}", path.display()))
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/C", "start", "", "cmd", "/K"])
+            .current_dir(&path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| {
+                format!(
+                    "Could not open Command Prompt in {}: {error}",
+                    path.display()
+                )
+            })
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        let _ = path;
+        Err("Opening a terminal is not supported on this platform".into())
+    }
+}
+
+fn spawn_terminal_command(command: &str, path: &Path) -> Result<(), String> {
+    Command::new("sh")
+        .args(["-c", command])
+        .current_dir(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Could not open {command} in {}: {error}", path.display()))
+}
+
+#[cfg(target_os = "linux")]
+fn gnome_default_terminal_command() -> Option<String> {
+    let output = Command::new("gsettings")
+        .args([
+            "get",
+            "org.gnome.desktop.default-applications.terminal",
+            "exec",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let command = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .trim_matches('\'')
+        .to_owned();
+    (!command.is_empty()).then_some(command)
 }
 
 async fn default_file_opener(path: PathBuf) -> Result<String, String> {

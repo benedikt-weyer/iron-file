@@ -66,6 +66,8 @@ pub struct BrowserSettings {
     pub preview_enabled: bool,
     #[serde(default = "default_single_click_opens_folders")]
     pub single_click_opens_folders: bool,
+    #[serde(default = "default_terminal_command")]
+    pub terminal_command: String,
 }
 
 #[derive(Debug, Clone)]
@@ -429,6 +431,10 @@ fn default_preview_enabled() -> bool {
     default_browser_settings().preview_enabled
 }
 
+fn default_terminal_command() -> String {
+    default_browser_settings().terminal_command
+}
+
 fn default_profile_file() -> ProfileFile {
     toml::from_str(DEFAULT_PROFILE_TOML).expect("default profile must be valid TOML")
 }
@@ -566,15 +572,15 @@ mod tests {
         let profile = store.create_profile("Click mode").unwrap();
         let mut browser = profile.browser.clone();
         browser.single_click_opens_folders = true;
+        browser.terminal_command = "foot".into();
 
         let saved = store.save_browser_settings(&profile, browser).unwrap();
 
         assert!(saved.browser.single_click_opens_folders);
-        assert!(
-            fs::read_to_string(&profile.path)
-                .unwrap()
-                .contains("single_click_opens_folders = true")
-        );
+        assert_eq!(saved.browser.terminal_command, "foot");
+        let saved_toml = fs::read_to_string(&profile.path).unwrap();
+        assert!(saved_toml.contains("single_click_opens_folders = true"));
+        assert!(saved_toml.contains("terminal_command = \"foot\""));
         fs::remove_dir_all(directory).unwrap();
     }
 
