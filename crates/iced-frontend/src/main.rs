@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use iced::{
-    Color, Element, Font, Length, Point, Task, Theme,
+    Color, Element, Font, Length, Point, Task, Theme, mouse,
     widget::{
         Space, button, column, container, mouse_area, radio, row, scrollable, stack, text,
         text_input, tooltip,
@@ -447,9 +447,14 @@ impl Gui {
             let path = PathBuf::from(&entry.path);
             if entry.is_directory {
                 column.push(
-                    mouse_area(row![icon, text(&entry.name)].spacing(8))
-                        .on_press(Message::OpenPath(path.clone()))
-                        .on_right_press(Message::ShowFolderContext(path.clone())),
+                    mouse_area(
+                        button(row![icon, text(&entry.name)].spacing(8))
+                            .style(iced::widget::button::text)
+                            .width(Length::Fill)
+                            .on_press(Message::OpenPath(path.clone())),
+                    )
+                    .on_right_press(Message::ShowFolderContext(path.clone()))
+                    .interaction(mouse::Interaction::Pointer),
                 )
             } else {
                 column.push(
