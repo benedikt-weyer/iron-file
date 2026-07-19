@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 
 use iced::{
-    Element, Font, Length, Task, Theme,
+    Element, Font, Length, Point, Task, Theme,
     widget::{
-        button, column, container, mouse_area, radio, row, scrollable, text, text_input, tooltip,
+        Space, button, column, container, mouse_area, radio, row, scrollable, stack, text,
+        text_input, tooltip,
     },
 };
 use iconflow::{Pack, Size, Style, fonts, try_icon};
@@ -51,6 +52,8 @@ struct Gui {
     new_profile_name: String,
     color_mode: ColorMode,
     context_folder: Option<PathBuf>,
+    pointer_position: Point,
+    context_position: Point,
     dragging_sidebar_location: Option<PathBuf>,
 }
 
@@ -74,6 +77,7 @@ enum Message {
     ResetActiveProfile,
     ColorModeSelected(ColorMode),
     ShowFolderContext(PathBuf),
+    ContextPointerMoved(Point),
     CloseFolderContext,
     AddContextFolderToSidebar,
     RemoveContextFolderFromSidebar,
@@ -117,6 +121,8 @@ impl Gui {
             new_profile_name: String::new(),
             color_mode,
             context_folder: None,
+            pointer_position: Point::ORIGIN,
+            context_position: Point::ORIGIN,
             dragging_sidebar_location: None,
         }
     }
@@ -178,6 +184,11 @@ impl Gui {
             }
             Message::ShowFolderContext(path) => {
                 self.context_folder = Some(path);
+                self.context_position = self.pointer_position;
+                Task::none()
+            }
+            Message::ContextPointerMoved(position) => {
+                self.pointer_position = position;
                 Task::none()
             }
             Message::CloseFolderContext => {
@@ -418,7 +429,7 @@ impl Gui {
                 column.push(
                     mouse_area(row![icon, text(&entry.name)].spacing(8))
                         .on_press(Message::OpenPath(path.clone()))
-                        .on_right_press(Message::ShowFolderContext(path)),
+                        .on_right_press(Message::ShowFolderContext(path.clone())),
                 )
             } else {
                 column.push(
@@ -460,7 +471,12 @@ impl Gui {
         let main_content = row![self.sidebar_view(), browser]
             .spacing(16)
             .height(Length::Fill);
-        let content = if let Some(folder) = self.context_folder.as_ref() {
+        let content = column![address_bar, text(&self.status), main_content];
+
+        let page = container(content.spacing(12).padding(16).height(Length::Fill))
+            .width(Length::Fill)
+            .height(Length::Fill);
+        let overlay = self.context_folder.as_ref().map(|folder| {
             let is_in_sidebar = self
                 .active_sidebar_locations()
                 .iter()
@@ -471,9 +487,8 @@ impl Gui {
             } else {
                 button(text("Add to sidebar")).on_press(Message::AddContextFolderToSidebar)
             };
-            let context_menu = container(
+            let menu = container(
                 row![
-                    text(folder.display().to_string()).width(Length::Fill),
                     action,
                     tooltip(
                         button(icon_text("x")).on_press(Message::CloseFolderContext),
@@ -483,14 +498,24 @@ impl Gui {
                 ]
                 .spacing(8),
             )
-            .padding(8)
-            .width(Length::Fill);
-            column![address_bar, context_menu, text(&self.status), main_content]
-        } else {
-            column![address_bar, text(&self.status), main_content]
-        };
+            .padding(8);
+            let menu_position = container(column![
+                Space::with_height(self.context_position.y),
+                row![Space::with_width(self.context_position.x), menu],
+            ])
+            .width(Length::Fill)
+            .height(Length::Fill);
+            stack![
+                mouse_area(Space::new(Length::Fill, Length::Fill))
+                    .on_press(Message::CloseFolderContext),
+                menu_position,
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+        });
 
-        container(content.spacing(12).padding(16).height(Length::Fill))
+        stack![mouse_area(page).on_move(Message::ContextPointerMoved)]
+            .push_maybe(overlay)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()

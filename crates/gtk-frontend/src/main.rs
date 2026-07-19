@@ -407,7 +407,7 @@ fn add_folder_context_menu(
     let menu_config = config.clone();
     let menu_sender = sender.clone();
     let menu_sidebar = sidebar.clone();
-    gesture.connect_pressed(move |_, _, _, _| {
+    gesture.connect_pressed(move |_, _, x, y| {
         let locations = active_sidebar_locations(&menu_config);
         let is_in_sidebar = locations.iter().any(|location| location.path == path);
         let action = Button::with_label(if is_in_sidebar {
@@ -427,6 +427,7 @@ fn add_folder_context_menu(
         content.append(&action);
         popover.set_child(Some(&content));
         popover.set_parent(&menu_button);
+        popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
         let action_config = menu_config.clone();
         let action_sidebar = menu_sidebar.clone();
         let action_sender = menu_sender.clone();
