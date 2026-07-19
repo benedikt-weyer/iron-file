@@ -5,6 +5,10 @@ thread and a shared background worker. Press the button to send an event to the
 worker; it replies with a status update displayed in the window. Iced is the
 default frontend, with GTK4 available as an optional build target.
 
+Both frontends provide an address bar, parent-folder navigation, clickable
+folder/file entries, and a text-file preview pane. Files over 1 MB and binary
+files are shown as a short preview notice.
+
 On Linux, the app uses X11 when `DISPLAY` is available. This avoids selecting
 an unusable Wayland backend in environments that expose both display variables.
 
