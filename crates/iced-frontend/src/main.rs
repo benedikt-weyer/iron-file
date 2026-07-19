@@ -1,4 +1,4 @@
-use std::{path::PathBuf, process::Command};
+use std::{fs, path::PathBuf, process::Command};
 
 use iced::{
     Border, Color, Element, Font, Length, Point, Task, Theme, mouse,
@@ -45,6 +45,7 @@ struct Gui {
     address: String,
     entries: Vec<proto::FileEntry>,
     drives: Vec<Drive>,
+    mounts: Vec<SystemMount>,
     content: String,
     status: String,
     editing_address: bool,
@@ -64,7 +65,19 @@ struct Gui {
 struct Drive {
     path: PathBuf,
     name: String,
-    mount_point: Option<PathBuf>,
+    mount_points: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct SystemMount {
+    path: PathBuf,
+    filesystem: String,
+}
+
+#[derive(Debug, Clone)]
+struct MountState {
+    drives: Vec<Drive>,
+    mounts: Vec<SystemMount>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,7 +108,7 @@ enum Message {
     RemoveContextFolderFromSidebar,
     SidebarPressed(PathBuf),
     SidebarReleased(PathBuf),
-    DrivesLoaded(Result<Vec<Drive>, String>),
+    MountsLoaded(Result<MountState, String>),
     MountDrive(PathBuf),
     BrowseFinished(Result<BrowseResponse, String>),
     IconFontLoaded(Result<(), iced::font::Error>),
@@ -127,6 +140,7 @@ impl Gui {
             directory_path,
             entries: Vec::new(),
             drives: Vec::new(),
+            mounts: Vec::new(),
             content: String::new(),
             status: "Connecting to backend".into(),
             editing_address: false,
@@ -154,8 +168,8 @@ impl Gui {
                     Message::BrowseFinished,
                 )))
                 .chain(std::iter::once(Task::perform(
-                    load_drives(),
-                    Message::DrivesLoaded,
+                    load_mounts(),
+                    Message::MountsLoaded,
                 ))),
         )
     }
@@ -237,16 +251,19 @@ impl Gui {
                 Task::none()
             }
             Message::SidebarReleased(path) => self.release_sidebar_location(path),
-            Message::DrivesLoaded(result) => {
+            Message::MountsLoaded(result) => {
                 match result {
-                    Ok(drives) => self.drives = drives,
+                    Ok(state) => {
+                        self.drives = state.drives;
+                        self.mounts = state.mounts;
+                    }
                     Err(error) => self.status = error,
                 }
                 Task::none()
             }
             Message::MountDrive(path) => {
                 self.status = format!("Mounting {}", path.display());
-                Task::perform(mount_drive(path), Message::DrivesLoaded)
+                Task::perform(mount_drive(path), Message::MountsLoaded)
             }
             Message::BrowseFinished(result) => {
                 self.apply_response(result);
@@ -701,26 +718,34 @@ impl Gui {
                 )
             },
         );
-        let drives = self.drives.iter().fold(
-            column![text("Drives").size(16)].spacing(6),
-            |column, drive| {
-                let label = if let Some(mount_point) = &drive.mount_point {
-                    format!("{} ({})", drive.name, mount_point.display())
-                } else {
-                    drive.name.clone()
-                };
-                let item = row![icon_text("hard-drive"), text(label)].spacing(8);
-                if let Some(mount_point) = &drive.mount_point {
-                    column.push(
-                        button(item)
-                            .style(iced::widget::button::text)
-                            .width(Length::Fill)
-                            .on_press(Message::OpenPath(mount_point.clone())),
+        let mounted = self.mounts.iter().fold(
+            column![text("Mounted").size(14)].spacing(4),
+            |column, mount| {
+                column.push(
+                    button(
+                        row![
+                            icon_text("hard-drive"),
+                            text(mount.path.display().to_string()),
+                        ]
+                        .spacing(8),
                     )
-                } else {
+                    .style(iced::widget::button::text)
+                    .width(Length::Fill)
+                    .on_press(Message::OpenPath(mount.path.clone())),
+                )
+            },
+        );
+        let unmounted = self
+            .drives
+            .iter()
+            .filter(|drive| drive.mount_points.is_empty())
+            .fold(
+                column![text("Available").size(14)].spacing(4),
+                |column, drive| {
                     column.push(
                         row![
-                            container(item).width(Length::Fill),
+                            container(row![icon_text("hard-drive"), text(&drive.name)].spacing(8))
+                                .width(Length::Fill),
                             tooltip(
                                 button(icon_text("plug-zap"))
                                     .on_press(Message::MountDrive(drive.path.clone())),
@@ -730,10 +755,10 @@ impl Gui {
                         ]
                         .spacing(4),
                     )
-                }
-            },
-        );
-        let sidebar_content = column![locations, drives].spacing(20);
+                },
+            );
+        let mounts = column![text("Mounts").size(16), mounted, unmounted].spacing(6);
+        let sidebar_content = column![locations, mounts].spacing(20);
         container(scrollable(sidebar_content))
             .width(Length::Fixed(180.0))
             .height(Length::Fill)
@@ -894,7 +919,7 @@ struct LsblkDevice {
     device_type: String,
 }
 
-async fn load_drives() -> Result<Vec<Drive>, String> {
+async fn load_mounts() -> Result<MountState, String> {
     #[cfg(target_os = "linux")]
     {
         let output = Command::new("lsblk")
@@ -910,12 +935,18 @@ async fn load_drives() -> Result<Vec<Drive>, String> {
         for device in output.blockdevices {
             collect_drives(device, &mut drives);
         }
-        Ok(drives)
+        Ok(MountState {
+            drives,
+            mounts: read_mounts()?,
+        })
     }
 
     #[cfg(not(target_os = "linux"))]
     {
-        Ok(Vec::new())
+        Ok(MountState {
+            drives: Vec::new(),
+            mounts: Vec::new(),
+        })
     }
 }
 
@@ -925,11 +956,11 @@ fn collect_drives(device: LsblkDevice, drives: &mut Vec<Drive>) {
         && (device.device_type == "part" || device.children.is_empty());
     if is_volume {
         if let Some(path) = device.path {
-            let mount_point = device.mountpoints.into_iter().flatten().next();
+            let mount_points = device.mountpoints.into_iter().flatten().collect();
             drives.push(Drive {
                 path,
                 name: device.label.unwrap_or(device.name),
-                mount_point,
+                mount_points,
             });
         }
     }
@@ -938,7 +969,7 @@ fn collect_drives(device: LsblkDevice, drives: &mut Vec<Drive>) {
     }
 }
 
-async fn mount_drive(path: PathBuf) -> Result<Vec<Drive>, String> {
+async fn mount_drive(path: PathBuf) -> Result<MountState, String> {
     #[cfg(target_os = "linux")]
     {
         let output = Command::new("udisksctl")
@@ -949,7 +980,7 @@ async fn mount_drive(path: PathBuf) -> Result<Vec<Drive>, String> {
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
         }
-        load_drives().await
+        load_mounts().await
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -957,4 +988,58 @@ async fn mount_drive(path: PathBuf) -> Result<Vec<Drive>, String> {
         let _ = path;
         Err("Mounting drives is not supported on this platform".into())
     }
+}
+
+#[cfg(target_os = "linux")]
+fn read_mounts() -> Result<Vec<SystemMount>, String> {
+    let mountinfo = fs::read_to_string("/proc/self/mountinfo")
+        .map_err(|error| format!("Could not read mounted filesystems: {error}"))?;
+    Ok(mountinfo
+        .lines()
+        .filter_map(|line| {
+            let (left, right) = line.split_once(" - ")?;
+            let mount_path = left.split_whitespace().nth(4)?;
+            let mut filesystem_fields = right.split_whitespace();
+            let filesystem = filesystem_fields.next()?;
+            let _source = filesystem_fields.next()?;
+            let mount = SystemMount {
+                path: PathBuf::from(unescape_mount_path(mount_path)),
+                filesystem: filesystem.into(),
+            };
+            (!is_system_mount(&mount)).then_some(mount)
+        })
+        .collect())
+}
+
+#[cfg(target_os = "linux")]
+fn is_system_mount(mount: &SystemMount) -> bool {
+    const SYSTEM_FILESYSTEMS: &[&str] = &[
+        "proc",
+        "sysfs",
+        "devtmpfs",
+        "devpts",
+        "tmpfs",
+        "cgroup",
+        "cgroup2",
+        "securityfs",
+        "pstore",
+        "tracefs",
+        "configfs",
+        "debugfs",
+        "mqueue",
+        "hugetlbfs",
+        "fusectl",
+    ];
+    SYSTEM_FILESYSTEMS.contains(&mount.filesystem.as_str())
+        || ["/proc", "/sys", "/dev", "/run"]
+            .iter()
+            .any(|path| mount.path.starts_with(path))
+}
+
+#[cfg(target_os = "linux")]
+fn unescape_mount_path(path: &str) -> String {
+    path.replace(r"\040", " ")
+        .replace(r"\011", "\t")
+        .replace(r"\012", "\n")
+        .replace(r"\134", r"\")
 }
