@@ -5,13 +5,10 @@ use std::{
 };
 
 use fs2::FileExt;
+use iron_file_common::{backend_lock_path, proto, socket_path};
 use tokio::net::{UnixListener, UnixStream};
 use tokio_stream::wrappers::UnixListenerStream;
 use tonic::{Request, Response, Status, transport::Server};
-
-pub mod proto {
-    tonic::include_proto!("ironfile.v1");
-}
 
 use proto::{
     BrowseResponse, BrowserError, Directory, FileContent, FileEntry, OpenPathRequest,
@@ -51,8 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn acquire_singleton_lock(socket: &Path) -> io::Result<File> {
-    let mut lock_path = socket.as_os_str().to_os_string();
-    lock_path.push(".lock");
+    let lock_path = backend_lock_path(socket);
     let file = OpenOptions::new()
         .create(true)
         .read(true)
@@ -68,16 +64,6 @@ fn acquire_singleton_lock(socket: &Path) -> io::Result<File> {
         )
     })?;
     Ok(file)
-}
-
-fn socket_path() -> PathBuf {
-    std::env::var_os("IRON_FILE_SOCKET")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("XDG_RUNTIME_DIR")
-                .map(|dir| PathBuf::from(dir).join("iron-file-backend.sock"))
-        })
-        .unwrap_or_else(|| std::env::temp_dir().join("iron-file-backend.sock"))
 }
 
 async fn bind_singleton_socket(path: &Path) -> io::Result<UnixListener> {

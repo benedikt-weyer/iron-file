@@ -1,28 +1,18 @@
 use std::path::PathBuf;
 
-use hyper_util::rt::TokioIo;
 use iced::{
     Element, Length, Task,
     widget::{button, column, container, row, scrollable, text, text_input},
 };
-use tokio::net::UnixStream;
-use tonic::{
-    Request,
-    transport::{Endpoint, Uri},
-};
-use tower::service_fn;
-
-pub mod proto {
-    tonic::include_proto!("ironfile.v1");
-}
-
-use proto::{
-    BrowseResponse, OpenPathRequest, browse_response::Payload,
-    file_browser_client::FileBrowserClient,
-};
+use iron_file_common::{browse, ensure_backend, proto};
+use proto::{BrowseResponse, browse_response::Payload};
+use tokio::runtime::Runtime;
 
 fn main() -> iced::Result {
     prefer_x11_when_available();
+    if let Ok(runtime) = Runtime::new() {
+        let _ = runtime.block_on(ensure_backend());
+    }
     iced::application("Iron File", Gui::update, Gui::view)
         .run_with(|| (Gui::new(), Gui::load_initial_directory()))
 }
@@ -167,34 +157,4 @@ impl Gui {
         .height(Length::Fill)
         .into()
     }
-}
-
-async fn browse(path: PathBuf) -> Result<BrowseResponse, String> {
-    let socket = socket_path();
-    let endpoint = Endpoint::try_from("http://[::]:50051").map_err(|error| error.to_string())?;
-    let channel = endpoint
-        .connect_with_connector(service_fn(move |_: Uri| {
-            let socket = socket.clone();
-            async move { UnixStream::connect(socket).await.map(TokioIo::new) }
-        }))
-        .await
-        .map_err(|error| format!("Cannot connect to the backend: {error}"))?;
-    let mut client = FileBrowserClient::new(channel);
-    client
-        .open_path(Request::new(OpenPathRequest {
-            path: path.display().to_string(),
-        }))
-        .await
-        .map(|response| response.into_inner())
-        .map_err(|error| error.to_string())
-}
-
-fn socket_path() -> PathBuf {
-    std::env::var_os("IRON_FILE_SOCKET")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("XDG_RUNTIME_DIR")
-                .map(|dir| PathBuf::from(dir).join("iron-file-backend.sock"))
-        })
-        .unwrap_or_else(|| std::env::temp_dir().join("iron-file-backend.sock"))
 }

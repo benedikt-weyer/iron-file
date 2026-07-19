@@ -8,6 +8,7 @@ over a local Unix-domain socket to browse files through one shared backend.
 | `iron-file-backend` | backend | Singleton filesystem service and gRPC server |
 | `iron-file-iced` | Iced frontend | Default file-browser GUI client |
 | `iron-file-gtk` | GTK4 frontend | GTK4 file-browser GUI client |
+| `iron-file-common` | library | Shared protobuf, gRPC client, socket, and launcher logic |
 
 ## Run
 
@@ -24,6 +25,17 @@ same backend:
 ```sh
 run
 run-gtk
+```
+
+Frontends start the backend automatically when it is not already running. The
+default `dev` mode runs `cargo run --package iron-file-backend` using this
+workspace manifest. For an installed application, use production mode and pass
+the backend executable path:
+
+```sh
+IRON_FILE_BACKEND_MODE=prod \
+IRON_FILE_BACKEND_BIN=/path/to/iron-file-backend \
+run
 ```
 
 The backend listens at `$XDG_RUNTIME_DIR/iron-file-backend.sock`, or at the

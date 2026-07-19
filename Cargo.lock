@@ -2087,13 +2087,27 @@ name = "iron-file-backend"
 version = "0.1.0"
 dependencies = [
  "fs2",
+ "iron-file-common",
  "prost",
- "protoc-bin-vendored",
  "tokio",
  "tokio-stream",
  "tonic",
  "tonic-prost",
+]
+
+[[package]]
+name = "iron-file-common"
+version = "0.1.0"
+dependencies = [
+ "fs2",
+ "hyper-util",
+ "prost",
+ "protoc-bin-vendored",
+ "tokio",
+ "tonic",
+ "tonic-prost",
  "tonic-prost-build",
+ "tower",
 ]
 
 [[package]]
@@ -2101,29 +2115,17 @@ name = "iron-file-gtk"
 version = "0.1.0"
 dependencies = [
  "gtk4",
- "hyper-util",
- "prost",
- "protoc-bin-vendored",
+ "iron-file-common",
  "tokio",
- "tonic",
- "tonic-prost",
- "tonic-prost-build",
- "tower",
 ]
 
 [[package]]
 name = "iron-file-iced"
 version = "0.1.0"
 dependencies = [
- "hyper-util",
  "iced",
- "prost",
- "protoc-bin-vendored",
+ "iron-file-common",
  "tokio",
- "tonic",
- "tonic-prost",
- "tonic-prost-build",
- "tower",
 ]
 
 [[package]]

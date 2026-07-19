@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/backend",
+  "crates/common",
   "crates/iced-frontend",
   "crates/gtk-frontend",
 ]
