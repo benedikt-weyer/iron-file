@@ -1,3 +1,15 @@
 # Iron File default profile
 name = "Default"
 color_mode = "system"
+
+[[sidebar_locations]]
+label = "Home"
+path = "~/"
+
+[[sidebar_locations]]
+label = "Downloads"
+path = "~/Downloads"
+
+[[sidebar_locations]]
+label = "Pictures"
+path = "~/Pictures"

@@ -2,12 +2,14 @@ use std::path::PathBuf;
 
 use iced::{
     Element, Font, Length, Task, Theme,
-    widget::{button, column, container, radio, row, scrollable, text, text_input, tooltip},
+    widget::{
+        button, column, container, mouse_area, radio, row, scrollable, text, text_input, tooltip,
+    },
 };
 use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{
     browse,
-    config::{ColorMode, ConfigStore, Profile},
+    config::{ColorMode, ConfigStore, Profile, SidebarLocation},
     ensure_backend, proto,
 };
 use proto::{BrowseResponse, browse_response::Payload};
@@ -48,6 +50,8 @@ struct Gui {
     active_profile: Option<PathBuf>,
     new_profile_name: String,
     color_mode: ColorMode,
+    context_folder: Option<PathBuf>,
+    dragging_sidebar_location: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,7 +71,14 @@ enum Message {
     SelectProfile(PathBuf),
     NewProfileNameChanged(String),
     CreateProfile,
+    ResetActiveProfile,
     ColorModeSelected(ColorMode),
+    ShowFolderContext(PathBuf),
+    CloseFolderContext,
+    AddContextFolderToSidebar,
+    RemoveContextFolderFromSidebar,
+    SidebarPressed(PathBuf),
+    SidebarReleased(PathBuf),
     BrowseFinished(Result<BrowseResponse, String>),
     IconFontLoaded(Result<(), iced::font::Error>),
 }
@@ -105,6 +116,8 @@ impl Gui {
             active_profile,
             new_profile_name: String::new(),
             color_mode,
+            context_folder: None,
+            dragging_sidebar_location: None,
         }
     }
 
@@ -155,10 +168,35 @@ impl Gui {
                 self.create_profile();
                 Task::none()
             }
+            Message::ResetActiveProfile => {
+                self.reset_active_profile();
+                Task::none()
+            }
             Message::ColorModeSelected(color_mode) => {
                 self.save_color_mode(color_mode);
                 Task::none()
             }
+            Message::ShowFolderContext(path) => {
+                self.context_folder = Some(path);
+                Task::none()
+            }
+            Message::CloseFolderContext => {
+                self.context_folder = None;
+                Task::none()
+            }
+            Message::AddContextFolderToSidebar => {
+                self.add_context_folder_to_sidebar();
+                Task::none()
+            }
+            Message::RemoveContextFolderFromSidebar => {
+                self.remove_context_folder_from_sidebar();
+                Task::none()
+            }
+            Message::SidebarPressed(path) => {
+                self.dragging_sidebar_location = Some(path);
+                Task::none()
+            }
+            Message::SidebarReleased(path) => self.release_sidebar_location(path),
             Message::BrowseFinished(result) => {
                 self.apply_response(result);
                 Task::none()
@@ -210,27 +248,123 @@ impl Gui {
             return;
         };
         match self.config_store.save_color_mode(profile, color_mode) {
-            Ok(saved_profile) => {
-                let saved_path = saved_profile.path.clone();
-                if let Some(index) = self
-                    .profiles
-                    .iter()
-                    .position(|profile| profile.path == saved_path)
-                {
-                    self.profiles[index] = saved_profile;
-                } else {
-                    self.profiles.push(saved_profile);
-                    self.profiles
-                        .sort_by(|left, right| left.name.cmp(&right.name));
-                }
-                self.active_profile = Some(saved_path.clone());
-                self.color_mode = color_mode;
-                if let Err(error) = self.config_store.set_active_profile(&saved_path) {
-                    self.status = error;
-                }
-            }
+            Ok(saved_profile) => self.apply_saved_profile(saved_profile),
             Err(error) => self.status = error,
         }
+    }
+
+    fn save_sidebar_locations(&mut self, sidebar_locations: Vec<SidebarLocation>) {
+        let Some(path) = self.active_profile.clone() else {
+            self.status = "No active configuration profile".into();
+            return;
+        };
+        let Some(profile) = self.profiles.iter().find(|profile| profile.path == path) else {
+            self.status = "The active configuration profile is unavailable".into();
+            return;
+        };
+        match self
+            .config_store
+            .save_sidebar_locations(profile, sidebar_locations)
+        {
+            Ok(saved_profile) => self.apply_saved_profile(saved_profile),
+            Err(error) => self.status = error,
+        }
+    }
+
+    fn apply_saved_profile(&mut self, saved_profile: Profile) {
+        let saved_path = saved_profile.path.clone();
+        let color_mode = saved_profile.color_mode;
+        if let Some(index) = self
+            .profiles
+            .iter()
+            .position(|profile| profile.path == saved_path)
+        {
+            self.profiles[index] = saved_profile;
+        } else {
+            self.profiles.push(saved_profile);
+            self.profiles
+                .sort_by(|left, right| left.name.cmp(&right.name));
+        }
+        self.active_profile = Some(saved_path.clone());
+        self.color_mode = color_mode;
+        if let Err(error) = self.config_store.set_active_profile(&saved_path) {
+            self.status = error;
+        }
+    }
+
+    fn reset_active_profile(&mut self) {
+        let Some(path) = self.active_profile.clone() else {
+            self.status = "No active configuration profile".into();
+            return;
+        };
+        let Some(profile) = self.profiles.iter().find(|profile| profile.path == path) else {
+            self.status = "The active configuration profile is unavailable".into();
+            return;
+        };
+        match self.config_store.reset_profile(profile) {
+            Ok(saved_profile) => self.apply_saved_profile(saved_profile),
+            Err(error) => self.status = error,
+        }
+    }
+
+    fn active_sidebar_locations(&self) -> Vec<SidebarLocation> {
+        self.active_profile
+            .as_deref()
+            .and_then(|path| self.profiles.iter().find(|profile| profile.path == path))
+            .map(|profile| profile.sidebar_locations.clone())
+            .unwrap_or_default()
+    }
+
+    fn add_context_folder_to_sidebar(&mut self) {
+        let Some(path) = self.context_folder.take() else {
+            return;
+        };
+        let mut locations = self.active_sidebar_locations();
+        if locations.iter().any(|location| location.path == path) {
+            return;
+        }
+        let label = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| path.display().to_string());
+        locations.push(SidebarLocation { label, path });
+        self.save_sidebar_locations(locations);
+    }
+
+    fn remove_context_folder_from_sidebar(&mut self) {
+        let Some(path) = self.context_folder.take() else {
+            return;
+        };
+        let mut locations = self.active_sidebar_locations();
+        locations.retain(|location| location.path != path);
+        self.save_sidebar_locations(locations);
+    }
+
+    fn release_sidebar_location(&mut self, target: PathBuf) -> Task<Message> {
+        let Some(source) = self.dragging_sidebar_location.take() else {
+            return Task::none();
+        };
+        if source == target {
+            return self.open_path(target);
+        }
+        let mut locations = self.active_sidebar_locations();
+        let Some(source_index) = locations
+            .iter()
+            .position(|location| location.path == source)
+        else {
+            return Task::none();
+        };
+        let location = locations.remove(source_index);
+        let Some(target_index) = locations
+            .iter()
+            .position(|location| location.path == target)
+        else {
+            return Task::none();
+        };
+        locations.insert(target_index, location);
+        self.save_sidebar_locations(locations);
+        Task::none()
     }
 
     fn open_path(&mut self, path: PathBuf) -> Task<Message> {
@@ -279,11 +413,20 @@ impl Gui {
             } else {
                 icon_text("file")
             };
-            column.push(
-                button(row![icon, text(&entry.name)].spacing(8))
-                    .width(Length::Fill)
-                    .on_press(Message::OpenPath(PathBuf::from(&entry.path))),
-            )
+            let path = PathBuf::from(&entry.path);
+            if entry.is_directory {
+                column.push(
+                    mouse_area(row![icon, text(&entry.name)].spacing(8))
+                        .on_press(Message::OpenPath(path.clone()))
+                        .on_right_press(Message::ShowFolderContext(path)),
+                )
+            } else {
+                column.push(
+                    button(row![icon, text(&entry.name)].spacing(8))
+                        .width(Length::Fill)
+                        .on_press(Message::OpenPath(path)),
+                )
+            }
         });
 
         let address_bar = row![
@@ -314,16 +457,70 @@ impl Gui {
         ]
         .spacing(16)
         .height(Length::Fill);
+        let main_content = row![self.sidebar_view(), browser]
+            .spacing(16)
+            .height(Length::Fill);
+        let content = if let Some(folder) = self.context_folder.as_ref() {
+            let is_in_sidebar = self
+                .active_sidebar_locations()
+                .iter()
+                .any(|location| location.path == *folder);
+            let action = if is_in_sidebar {
+                button(text("Remove from sidebar"))
+                    .on_press(Message::RemoveContextFolderFromSidebar)
+            } else {
+                button(text("Add to sidebar")).on_press(Message::AddContextFolderToSidebar)
+            };
+            let context_menu = container(
+                row![
+                    text(folder.display().to_string()).width(Length::Fill),
+                    action,
+                    tooltip(
+                        button(icon_text("x")).on_press(Message::CloseFolderContext),
+                        text("Close menu"),
+                        tooltip::Position::Bottom,
+                    ),
+                ]
+                .spacing(8),
+            )
+            .padding(8)
+            .width(Length::Fill);
+            column![address_bar, context_menu, text(&self.status), main_content]
+        } else {
+            column![address_bar, text(&self.status), main_content]
+        };
 
-        container(
-            column![address_bar, text(&self.status), browser]
-                .spacing(12)
-                .padding(16)
-                .height(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        container(content.spacing(12).padding(16).height(Length::Fill))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
+
+    fn sidebar_view(&self) -> Element<'_, Message> {
+        let locations = self.active_sidebar_locations().into_iter().fold(
+            column![text("Locations").size(16)].spacing(6),
+            |column, location| {
+                let is_dragging = self.dragging_sidebar_location.as_ref() == Some(&location.path);
+                let label = if is_dragging {
+                    format!("Moving {}", location.label)
+                } else {
+                    location.label.clone()
+                };
+                column.push(
+                    mouse_area(
+                        container(row![icon_text(sidebar_icon(&location)), text(label)].spacing(8))
+                            .padding(8)
+                            .width(Length::Fill),
+                    )
+                    .on_press(Message::SidebarPressed(location.path.clone()))
+                    .on_release(Message::SidebarReleased(location.path)),
+                )
+            },
+        );
+        container(scrollable(locations))
+            .width(180)
+            .height(Length::Fill)
+            .into()
     }
 
     fn preferences_view(&self) -> Element<'_, Message> {
@@ -406,7 +603,19 @@ impl Gui {
             column![
                 row![back_button, text("Preferences").size(24)].spacing(12),
                 column![text("Profiles").size(18), profiles, create_profile].spacing(10),
-                column![text("Color mode").size(18), options].spacing(10),
+                column![
+                    row![
+                        text("Color mode").size(18),
+                        tooltip(
+                            button(icon_text("rotate-ccw")).on_press(Message::ResetActiveProfile),
+                            text("Reset active profile to defaults"),
+                            tooltip::Position::Bottom,
+                        ),
+                    ]
+                    .spacing(8),
+                    options,
+                ]
+                .spacing(10),
                 column![text("Configuration search paths").size(18), search_paths].spacing(10),
             ]
             .spacing(28)
@@ -427,4 +636,13 @@ fn icon_text(name: &str) -> iced::widget::Text<'static> {
     text(glyph.to_string())
         .size(18)
         .font(Font::with_name(icon.family))
+}
+
+fn sidebar_icon(location: &SidebarLocation) -> &'static str {
+    match location.label.as_str() {
+        "Home" => "house",
+        "Downloads" => "download",
+        "Pictures" => "image",
+        _ => "folder",
+    }
 }

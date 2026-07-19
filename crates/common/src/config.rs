@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 const APP_NAME: &str = "iron-file";
 const PROFILES_DIRECTORY: &str = "profiles";
 const STATE_FILE: &str = "config.toml";
+const DEFAULT_PROFILE_TOML: &str = include_str!("../../../config/default.toml");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -20,7 +21,9 @@ pub enum ColorMode {
 
 impl Default for ColorMode {
     fn default() -> Self {
-        Self::System
+        default_profile_file()
+            .color_mode
+            .expect("default profile must define color_mode")
     }
 }
 
@@ -29,8 +32,15 @@ pub struct Profile {
     pub path: PathBuf,
     pub name: String,
     pub color_mode: ColorMode,
+    pub sidebar_locations: Vec<SidebarLocation>,
     pub read_only: bool,
     pub base_profile: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SidebarLocation {
+    pub label: String,
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +53,7 @@ pub struct ConfigStore {
 struct ProfileFile {
     name: Option<String>,
     color_mode: Option<ColorMode>,
+    sidebar_locations: Option<Vec<SidebarLocation>>,
     base_profile: Option<PathBuf>,
 }
 
@@ -132,6 +143,7 @@ impl ConfigStore {
         let file = ProfileFile {
             name: Some(name.into()),
             color_mode: Some(ColorMode::System),
+            sidebar_locations: Some(default_sidebar_locations()),
             base_profile: None,
         };
         self.write_profile_file(&path, &file)?;
@@ -166,6 +178,7 @@ impl ConfigStore {
             let file = ProfileFile {
                 name: Some(profile.name.clone()),
                 color_mode: Some(color_mode),
+                sidebar_locations: None,
                 base_profile: Some(profile.path.clone()),
             };
             self.write_profile_file(&overlay, &file)?;
@@ -178,8 +191,65 @@ impl ConfigStore {
         self.read_profile(&profile.path)
     }
 
+    pub fn save_sidebar_locations(
+        &self,
+        profile: &Profile,
+        sidebar_locations: Vec<SidebarLocation>,
+    ) -> Result<Profile, String> {
+        if profile.read_only {
+            let overlay = self.overlay_path(&profile.path);
+            let file = ProfileFile {
+                name: Some(profile.name.clone()),
+                color_mode: None,
+                sidebar_locations: Some(sidebar_locations),
+                base_profile: Some(profile.path.clone()),
+            };
+            self.write_profile_file(&overlay, &file)?;
+            return self.read_profile(&overlay);
+        }
+
+        let mut file = self.read_profile_file(&profile.path)?;
+        file.sidebar_locations = Some(sidebar_locations);
+        self.write_profile_file(&profile.path, &file)?;
+        self.read_profile(&profile.path)
+    }
+
+    pub fn reset_profile(&self, profile: &Profile) -> Result<Profile, String> {
+        let defaults = default_profile_file();
+        let color_mode = defaults
+            .color_mode
+            .expect("default profile must define color_mode");
+        let sidebar_locations = default_sidebar_locations();
+        let path = if profile.read_only {
+            let overlay = self.overlay_path(&profile.path);
+            let file = ProfileFile {
+                name: Some(profile.name.clone()),
+                color_mode: Some(color_mode),
+                sidebar_locations: Some(sidebar_locations),
+                base_profile: Some(profile.path.clone()),
+            };
+            self.write_profile_file(&overlay, &file)?;
+            overlay
+        } else {
+            let mut file = self.read_profile_file(&profile.path)?;
+            file.color_mode = Some(color_mode);
+            file.sidebar_locations = Some(sidebar_locations);
+            self.write_profile_file(&profile.path, &file)?;
+            profile.path.clone()
+        };
+        self.read_profile(&path)
+    }
+
     fn read_profile(&self, path: &Path) -> Result<Profile, String> {
-        let file = self.read_profile_file(path)?;
+        let mut file = self.read_profile_file(path)?;
+        if let Some(base_profile) = file.base_profile.as_mut() {
+            *base_profile = expand_home_path(base_profile);
+        }
+        if let Some(sidebar_locations) = file.sidebar_locations.as_mut() {
+            for location in sidebar_locations {
+                location.path = expand_home_path(&location.path);
+            }
+        }
         let inherited = file
             .base_profile
             .as_deref()
@@ -189,6 +259,14 @@ impl ConfigStore {
             .color_mode
             .or_else(|| inherited.as_ref().map(|profile| profile.color_mode))
             .unwrap_or_default();
+        let sidebar_locations = file
+            .sidebar_locations
+            .or_else(|| {
+                inherited
+                    .as_ref()
+                    .map(|profile| profile.sidebar_locations.clone())
+            })
+            .unwrap_or_else(default_sidebar_locations);
         let name = file.name.unwrap_or_else(|| profile_name_from_path(path));
         let read_only = fs::metadata(path)
             .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?
@@ -198,6 +276,7 @@ impl ConfigStore {
             path: path.to_path_buf(),
             name,
             color_mode,
+            sidebar_locations,
             read_only,
             base_profile: file.base_profile,
         })
@@ -244,6 +323,32 @@ impl ConfigStore {
         self.user_profiles_dir()
             .join(format!("{stem}-override-{:x}.toml", path_hash(source)))
     }
+}
+
+pub fn default_sidebar_locations() -> Vec<SidebarLocation> {
+    default_profile_file()
+        .sidebar_locations
+        .expect("default profile must define sidebar_locations")
+        .into_iter()
+        .map(|mut location| {
+            location.path = expand_home_path(&location.path);
+            location
+        })
+        .collect()
+}
+
+fn default_profile_file() -> ProfileFile {
+    toml::from_str(DEFAULT_PROFILE_TOML).expect("default profile must be valid TOML")
+}
+
+fn expand_home_path(path: &Path) -> PathBuf {
+    let Some(relative) = path.to_str().and_then(|path| path.strip_prefix("~/")) else {
+        return path.to_path_buf();
+    };
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("~"))
+        .join(relative)
 }
 
 fn profile_filename(name: &str) -> Result<String, String> {
@@ -359,6 +464,58 @@ mod tests {
                 .unwrap()
                 .contains("color_mode = \"day\"")
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn saves_sidebar_locations_in_their_selected_order() {
+        let directory = test_directory();
+        let store = ConfigStore::with_paths(directory.join("user"), vec![]);
+        let profile = store.create_profile("Sidebar").unwrap();
+        let locations = vec![
+            SidebarLocation {
+                label: "Projects".into(),
+                path: PathBuf::from("/tmp/projects"),
+            },
+            SidebarLocation {
+                label: "Archive".into(),
+                path: PathBuf::from("/tmp/archive"),
+            },
+        ];
+
+        let saved = store
+            .save_sidebar_locations(&profile, locations.clone())
+            .unwrap();
+
+        assert_eq!(saved.sidebar_locations, locations);
+        assert!(
+            fs::read_to_string(&profile.path)
+                .unwrap()
+                .contains("[[sidebar_locations]]")
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn resets_a_profile_from_the_repository_default() {
+        let directory = test_directory();
+        let store = ConfigStore::with_paths(directory.join("user"), vec![]);
+        let profile = store.create_profile("Resettable").unwrap();
+        let changed = store.save_color_mode(&profile, ColorMode::Night).unwrap();
+        let changed = store
+            .save_sidebar_locations(
+                &changed,
+                vec![SidebarLocation {
+                    label: "Other".into(),
+                    path: PathBuf::from("/tmp/other"),
+                }],
+            )
+            .unwrap();
+
+        let reset = store.reset_profile(&changed).unwrap();
+
+        assert_eq!(reset.color_mode, ColorMode::System);
+        assert_eq!(reset.sidebar_locations, default_sidebar_locations());
         fs::remove_dir_all(directory).unwrap();
     }
 
