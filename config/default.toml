@@ -6,6 +6,11 @@ color_mode = "system"
 light_highlight = "#4f7cac"
 dark_highlight = "#85b7eb"
 
+[browser]
+item_size = 32
+layout = "list"
+preview_enabled = false
+
 [[sidebar_locations]]
 label = "Home"
 path = "~/"

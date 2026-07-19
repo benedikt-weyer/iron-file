@@ -3,14 +3,14 @@ use std::{fs, path::PathBuf, process::Command};
 use iced::{
     Border, Color, Element, Font, Length, Point, Task, Theme, mouse,
     widget::{
-        Space, button, column, container, mouse_area, radio, row, scrollable, stack, text,
-        text_input, tooltip,
+        Space, button, column, container, mouse_area, radio, responsive, row, scrollable, slider,
+        stack, text, text_input, toggler, tooltip,
     },
 };
 use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{
     browse,
-    config::{ColorMode, ConfigStore, Profile, SidebarLocation},
+    config::{BrowserLayout, BrowserSettings, ColorMode, ConfigStore, Profile, SidebarLocation},
     ensure_backend, proto,
 };
 use proto::{BrowseResponse, browse_response::Payload};
@@ -101,6 +101,9 @@ enum Message {
     CreateProfile,
     ResetActiveProfile,
     ColorModeSelected(ColorMode),
+    BrowserLayoutSelected(BrowserLayout),
+    BrowserItemSizeChanged(u16),
+    PreviewToggled(bool),
     ShowFolderContext(PathBuf),
     ContextPointerMoved(Point),
     CloseFolderContext,
@@ -225,6 +228,24 @@ impl Gui {
                 self.save_color_mode(color_mode);
                 Task::none()
             }
+            Message::BrowserLayoutSelected(layout) => {
+                let mut browser = self.active_browser_settings();
+                browser.layout = layout;
+                self.save_browser_settings(browser);
+                Task::none()
+            }
+            Message::BrowserItemSizeChanged(item_size) => {
+                let mut browser = self.active_browser_settings();
+                browser.item_size = item_size;
+                self.save_browser_settings(browser);
+                Task::none()
+            }
+            Message::PreviewToggled(preview_enabled) => {
+                let mut browser = self.active_browser_settings();
+                browser.preview_enabled = preview_enabled;
+                self.save_browser_settings(browser);
+                Task::none()
+            }
             Message::ShowFolderContext(path) => {
                 self.context_folder = Some(path);
                 self.context_position = self.pointer_position;
@@ -299,6 +320,29 @@ impl Gui {
             .and_then(|path| self.profiles.iter().find(|profile| profile.path == path))
             .map(|profile| profile.theme.clone())
             .unwrap_or_else(iron_file_common::config::default_theme_settings)
+    }
+
+    fn active_browser_settings(&self) -> BrowserSettings {
+        self.active_profile
+            .as_deref()
+            .and_then(|path| self.profiles.iter().find(|profile| profile.path == path))
+            .map(|profile| profile.browser.clone())
+            .unwrap_or_else(iron_file_common::config::default_browser_settings)
+    }
+
+    fn save_browser_settings(&mut self, browser: BrowserSettings) {
+        let Some(path) = self.active_profile.clone() else {
+            self.status = "No active configuration profile".into();
+            return;
+        };
+        let Some(profile) = self.profiles.iter().find(|profile| profile.path == path) else {
+            self.status = "The active configuration profile is unavailable".into();
+            return;
+        };
+        match self.config_store.save_browser_settings(profile, browser) {
+            Ok(saved_profile) => self.apply_saved_profile(saved_profile),
+            Err(error) => self.status = error,
+        }
     }
 
     fn select_profile(&mut self, path: PathBuf) {
@@ -496,18 +540,19 @@ impl Gui {
     }
 
     fn browser_view(&self) -> Element<'_, Message> {
+        let browser_settings = self.active_browser_settings();
         let entries = self.entries.iter().fold(column![], |column, entry| {
             let icon = if entry.is_directory {
-                icon_text("folder")
+                icon_text("folder").size(browser_settings.item_size)
             } else {
-                icon_text("file")
+                icon_text("file").size(browser_settings.item_size)
             };
             let path = PathBuf::from(&entry.path);
             if entry.is_directory {
                 column.push(
                     mouse_area(
                         button(row![icon, text(&entry.name)].spacing(8))
-                            .style(iced::widget::button::text)
+                            .style(file_item_button_style)
                             .width(Length::Fill)
                             .on_press(Message::OpenPath(path.clone())),
                     )
@@ -517,12 +562,69 @@ impl Gui {
             } else {
                 column.push(
                     button(row![icon, text(&entry.name)].spacing(8))
-                        .style(iced::widget::button::text)
+                        .style(file_item_button_style)
                         .width(Length::Fill)
                         .on_press(Message::OpenPath(path)),
                 )
             }
         });
+        let entries: Element<'_, Message> = if browser_settings.layout == BrowserLayout::Tiles {
+            responsive(move |size| {
+                let tile_width = f32::from(browser_settings.item_size) * 3.5;
+                let tile_height = tile_width * 1.2;
+                let columns = (size.width / tile_width).floor().max(1.0) as usize;
+                let tiles =
+                    self.entries
+                        .chunks(columns)
+                        .fold(column![].spacing(8), |column, chunk| {
+                            let tiles = chunk.iter().fold(row![].spacing(8), |row, entry| {
+                                let path = PathBuf::from(&entry.path);
+                                let icon = if entry.is_directory {
+                                    icon_text("folder").size(browser_settings.item_size)
+                                } else {
+                                    icon_text("file").size(browser_settings.item_size)
+                                };
+                                let tile_content = container(
+                                    column![
+                                        icon,
+                                        text(&entry.name)
+                                            .width(Length::Fill)
+                                            .align_x(iced::alignment::Horizontal::Center),
+                                    ]
+                                    .spacing(6)
+                                    .align_x(iced::alignment::Horizontal::Center),
+                                )
+                                .width(Length::Fill)
+                                .height(Length::Fill)
+                                .center_x(Length::Fill)
+                                .center_y(Length::Fill);
+                                let tile = button(tile_content)
+                                    .style(file_item_button_style)
+                                    .width(Length::Fixed(tile_width))
+                                    .height(Length::Fixed(tile_height))
+                                    .on_press(Message::OpenPath(path.clone()));
+                                if entry.is_directory {
+                                    row.push(
+                                        mouse_area(tile)
+                                            .on_right_press(Message::ShowFolderContext(path))
+                                            .interaction(mouse::Interaction::Pointer),
+                                    )
+                                } else {
+                                    row.push(tile)
+                                }
+                            });
+                            column.push(tiles)
+                        });
+
+                scrollable(tiles)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            })
+            .into()
+        } else {
+            entries.into()
+        };
 
         let mut address_bar = row![
             tooltip(
@@ -545,13 +647,32 @@ impl Gui {
             text(String::from("Preferences")),
             tooltip::Position::Bottom,
         ));
-        let browser = row![
-            scrollable(entries).width(Length::FillPortion(1)),
-            scrollable(text(&self.content)).width(Length::FillPortion(2)),
-        ]
-        .spacing(16)
-        .width(Length::Fill)
-        .height(Length::Fill);
+        let tiles_layout = browser_settings.layout == BrowserLayout::Tiles;
+        let browser: Element<'_, Message> = if browser_settings.preview_enabled {
+            let file_pane: Element<'_, Message> = if tiles_layout {
+                container(entries)
+                    .width(Length::FillPortion(1))
+                    .height(Length::Fill)
+                    .into()
+            } else {
+                scrollable(entries).width(Length::FillPortion(1)).into()
+            };
+            row![
+                file_pane,
+                scrollable(text(&self.content)).width(Length::FillPortion(2)),
+            ]
+            .spacing(16)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+        } else if tiles_layout {
+            entries
+        } else {
+            scrollable(entries)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        };
         let main_content = row![self.sidebar_view(), browser]
             .spacing(16)
             .width(Length::Fill)
@@ -792,6 +913,32 @@ impl Gui {
             ),
         ]
         .spacing(12);
+        let browser = self.active_browser_settings();
+        let browser_options = column![
+            radio(
+                "List",
+                BrowserLayout::List,
+                Some(browser.layout),
+                Message::BrowserLayoutSelected
+            ),
+            radio(
+                "Tiles",
+                BrowserLayout::Tiles,
+                Some(browser.layout),
+                Message::BrowserLayoutSelected
+            ),
+            row![
+                text("Item size"),
+                slider(20..=64, browser.item_size, Message::BrowserItemSizeChanged)
+                    .width(Length::Fill),
+                text(format!("{} px", browser.item_size)),
+            ]
+            .spacing(10),
+            toggler(browser.preview_enabled)
+                .label("Show preview pane")
+                .on_toggle(Message::PreviewToggled),
+        ]
+        .spacing(10);
         let profiles = self
             .profiles
             .iter()
@@ -858,6 +1005,7 @@ impl Gui {
                     options,
                 ]
                 .spacing(10),
+                column![text("Browser").size(18), browser_options].spacing(10),
                 column![text("Configuration search paths").size(18), search_paths].spacing(10),
             ]
             .spacing(28)
@@ -878,6 +1026,22 @@ fn icon_text<'a>(name: &str) -> iced::widget::Text<'a> {
     text(glyph.to_string())
         .size(18)
         .font(Font::with_name(icon.family))
+}
+
+fn file_item_button_style(theme: &Theme, status: button::Status) -> button::Style {
+    let base = button::text(theme, status);
+    let style = button::Style {
+        border: Border {
+            radius: 6.0.into(),
+            ..base.border
+        },
+        ..base
+    };
+    if matches!(status, button::Status::Hovered) {
+        style.with_background(Color::from_rgba8(128, 128, 128, 0.18))
+    } else {
+        style
+    }
 }
 
 fn sidebar_icon(location: &SidebarLocation) -> &'static str {

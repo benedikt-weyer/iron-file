@@ -34,6 +34,7 @@ pub struct Profile {
     pub color_mode: ColorMode,
     pub sidebar_locations: Vec<SidebarLocation>,
     pub theme: ThemeSettings,
+    pub browser: BrowserSettings,
     pub read_only: bool,
     pub base_profile: Option<PathBuf>,
 }
@@ -50,6 +51,21 @@ pub struct ThemeSettings {
     pub dark_highlight: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BrowserLayout {
+    List,
+    Tiles,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrowserSettings {
+    pub item_size: u16,
+    pub layout: BrowserLayout,
+    #[serde(default)]
+    pub preview_enabled: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct ConfigStore {
     user_config_dir: PathBuf,
@@ -62,6 +78,7 @@ struct ProfileFile {
     color_mode: Option<ColorMode>,
     sidebar_locations: Option<Vec<SidebarLocation>>,
     theme: Option<ThemeSettings>,
+    browser: Option<BrowserSettings>,
     base_profile: Option<PathBuf>,
 }
 
@@ -153,6 +170,7 @@ impl ConfigStore {
             color_mode: Some(ColorMode::System),
             sidebar_locations: Some(default_sidebar_locations()),
             theme: Some(default_theme_settings()),
+            browser: Some(default_browser_settings()),
             base_profile: None,
         };
         self.write_profile_file(&path, &file)?;
@@ -189,6 +207,7 @@ impl ConfigStore {
                 color_mode: Some(color_mode),
                 sidebar_locations: None,
                 theme: None,
+                browser: None,
                 base_profile: Some(profile.path.clone()),
             };
             self.write_profile_file(&overlay, &file)?;
@@ -213,6 +232,7 @@ impl ConfigStore {
                 color_mode: None,
                 sidebar_locations: Some(sidebar_locations),
                 theme: None,
+                browser: None,
                 base_profile: Some(profile.path.clone()),
             };
             self.write_profile_file(&overlay, &file)?;
@@ -221,6 +241,31 @@ impl ConfigStore {
 
         let mut file = self.read_profile_file(&profile.path)?;
         file.sidebar_locations = Some(sidebar_locations);
+        self.write_profile_file(&profile.path, &file)?;
+        self.read_profile(&profile.path)
+    }
+
+    pub fn save_browser_settings(
+        &self,
+        profile: &Profile,
+        browser: BrowserSettings,
+    ) -> Result<Profile, String> {
+        if profile.read_only {
+            let overlay = self.overlay_path(&profile.path);
+            let file = ProfileFile {
+                name: Some(profile.name.clone()),
+                color_mode: None,
+                sidebar_locations: None,
+                theme: None,
+                browser: Some(browser),
+                base_profile: Some(profile.path.clone()),
+            };
+            self.write_profile_file(&overlay, &file)?;
+            return self.read_profile(&overlay);
+        }
+
+        let mut file = self.read_profile_file(&profile.path)?;
+        file.browser = Some(browser);
         self.write_profile_file(&profile.path, &file)?;
         self.read_profile(&profile.path)
     }
@@ -238,6 +283,7 @@ impl ConfigStore {
                 color_mode: Some(color_mode),
                 sidebar_locations: Some(sidebar_locations),
                 theme: Some(default_theme_settings()),
+                browser: Some(default_browser_settings()),
                 base_profile: Some(profile.path.clone()),
             };
             self.write_profile_file(&overlay, &file)?;
@@ -247,6 +293,7 @@ impl ConfigStore {
             file.color_mode = Some(color_mode);
             file.sidebar_locations = Some(sidebar_locations);
             file.theme = Some(default_theme_settings());
+            file.browser = Some(default_browser_settings());
             self.write_profile_file(&profile.path, &file)?;
             profile.path.clone()
         };
@@ -284,6 +331,10 @@ impl ConfigStore {
             .theme
             .or_else(|| inherited.as_ref().map(|profile| profile.theme.clone()))
             .unwrap_or_else(default_theme_settings);
+        let browser = file
+            .browser
+            .or_else(|| inherited.as_ref().map(|profile| profile.browser.clone()))
+            .unwrap_or_else(default_browser_settings);
         let name = file.name.unwrap_or_else(|| profile_name_from_path(path));
         let read_only = fs::metadata(path)
             .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?
@@ -295,6 +346,7 @@ impl ConfigStore {
             color_mode,
             sidebar_locations,
             theme,
+            browser,
             read_only,
             base_profile: file.base_profile,
         })
@@ -359,6 +411,12 @@ pub fn default_theme_settings() -> ThemeSettings {
     default_profile_file()
         .theme
         .expect("default profile must define theme")
+}
+
+pub fn default_browser_settings() -> BrowserSettings {
+    default_profile_file()
+        .browser
+        .expect("default profile must define browser")
 }
 
 fn default_profile_file() -> ProfileFile {
