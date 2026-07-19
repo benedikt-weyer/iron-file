@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use iced::{
-    Color, Element, Font, Length, Point, Task, Theme, mouse,
+    Border, Color, Element, Font, Length, Point, Task, Theme, mouse,
     widget::{
         Space, button, column, container, mouse_area, radio, row, scrollable, stack, text,
         text_input, tooltip,
@@ -45,6 +45,7 @@ struct Gui {
     entries: Vec<proto::FileEntry>,
     content: String,
     status: String,
+    editing_address: bool,
     view: View,
     config_store: ConfigStore,
     profiles: Vec<Profile>,
@@ -66,6 +67,8 @@ enum View {
 #[derive(Debug, Clone)]
 enum Message {
     AddressChanged(String),
+    StartAddressEdit,
+    CancelAddressEdit,
     OpenAddress,
     OpenPath(PathBuf),
     OpenParent,
@@ -114,6 +117,7 @@ impl Gui {
             entries: Vec::new(),
             content: String::new(),
             status: "Connecting to backend".into(),
+            editing_address: false,
             view: View::Browser,
             config_store,
             profiles,
@@ -144,6 +148,15 @@ impl Gui {
         match message {
             Message::AddressChanged(address) => {
                 self.address = address;
+                Task::none()
+            }
+            Message::StartAddressEdit => {
+                self.editing_address = true;
+                Task::none()
+            }
+            Message::CancelAddressEdit => {
+                self.address = self.directory_path.display().to_string();
+                self.editing_address = false;
                 Task::none()
             }
             Message::OpenAddress => self.open_path(PathBuf::from(&self.address)),
@@ -399,6 +412,7 @@ impl Gui {
     }
 
     fn open_path(&mut self, path: PathBuf) -> Task<Message> {
+        self.editing_address = false;
         self.status = format!("Loading {}", path.display());
         Task::perform(browse(path), Message::BrowseFinished)
     }
@@ -466,36 +480,37 @@ impl Gui {
             }
         });
 
-        let address_bar = row![
+        let mut address_bar = row![
             tooltip(
                 button(icon_text("folder-up")).on_press(Message::OpenParent),
                 text("Parent folder"),
                 tooltip::Position::Bottom,
             ),
-            text_input("Path", &self.address)
-                .on_input(Message::AddressChanged)
-                .on_submit(Message::OpenAddress)
-                .width(Length::Fill),
-            tooltip(
-                button(icon_text("folder-open")).on_press(Message::OpenAddress),
-                text("Open path"),
-                tooltip::Position::Bottom,
-            ),
-            tooltip(
-                button(icon_text("settings")).on_press(Message::ShowPreferences),
-                text("Preferences"),
-                tooltip::Position::Bottom,
-            ),
+            self.address_control(),
         ]
         .spacing(8);
+        if self.editing_address {
+            address_bar = address_bar.push(tooltip(
+                button(icon_text("folder-open")).on_press(Message::OpenAddress),
+                text(String::from("Open path")),
+                tooltip::Position::Bottom,
+            ));
+        }
+        address_bar = address_bar.push(tooltip(
+            button(icon_text("settings")).on_press(Message::ShowPreferences),
+            text(String::from("Preferences")),
+            tooltip::Position::Bottom,
+        ));
         let browser = row![
             scrollable(entries).width(Length::FillPortion(1)),
             scrollable(text(&self.content)).width(Length::FillPortion(2)),
         ]
         .spacing(16)
+        .width(Length::Fill)
         .height(Length::Fill);
         let main_content = row![self.sidebar_view(), browser]
             .spacing(16)
+            .width(Length::Fill)
             .height(Length::Fill);
         let content = column![address_bar, text(&self.status), main_content];
 
@@ -540,11 +555,92 @@ impl Gui {
             .height(Length::Fill)
         });
 
-        stack![mouse_area(page).on_move(Message::ContextPointerMoved)]
+        let page: Element<'_, Message> = if self.editing_address {
+            stack![
+                mouse_area(Space::new(Length::Fill, Length::Fill))
+                    .on_press(Message::CancelAddressEdit)
+                    .on_move(Message::ContextPointerMoved),
+                page,
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+        } else {
+            mouse_area(page)
+                .on_move(Message::ContextPointerMoved)
+                .into()
+        };
+
+        stack![page]
             .push_maybe(overlay)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
+    }
+
+    fn address_control(&self) -> Element<'_, Message> {
+        if self.editing_address {
+            return text_input("Path", &self.address)
+                .on_input(Message::AddressChanged)
+                .on_submit(Message::OpenAddress)
+                .width(Length::Fill)
+                .into();
+        }
+
+        let path = PathBuf::from(&self.address);
+        let mut target = PathBuf::new();
+        let mut breadcrumbs = row![].spacing(2);
+        for component in path.components() {
+            use std::path::Component;
+
+            let label = match component {
+                Component::RootDir => {
+                    target.push(component.as_os_str());
+                    "/".into()
+                }
+                Component::CurDir => {
+                    target.push(component.as_os_str());
+                    ".".into()
+                }
+                Component::ParentDir => {
+                    target.push(component.as_os_str());
+                    "..".into()
+                }
+                Component::Normal(name) => {
+                    target.push(name);
+                    name.to_string_lossy().into_owned()
+                }
+                Component::Prefix(prefix) => {
+                    target.push(prefix.as_os_str());
+                    prefix.as_os_str().to_string_lossy().into_owned()
+                }
+            };
+            breadcrumbs = breadcrumbs.push(
+                button(text(label))
+                    .style(iced::widget::button::text)
+                    .on_press(Message::OpenPath(target.clone())),
+            );
+        }
+
+        let breadcrumbs = container(breadcrumbs)
+            .padding([2, 6])
+            .width(Length::Fill)
+            .align_y(iced::alignment::Vertical::Center)
+            .style(|theme| {
+                iced::widget::container::Style::default().border(Border {
+                    color: theme.extended_palette().background.strong.color,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                })
+            });
+        stack![
+            mouse_area(Space::new(Length::Fill, Length::Fixed(30.0)))
+                .on_press(Message::StartAddressEdit),
+            breadcrumbs,
+        ]
+        .width(Length::Fill)
+        .height(Length::Shrink)
+        .into()
     }
 
     fn sidebar_view(&self) -> Element<'_, Message> {
@@ -579,7 +675,7 @@ impl Gui {
             },
         );
         container(scrollable(locations))
-            .width(180)
+            .width(Length::Fixed(180.0))
             .height(Length::Fill)
             .into()
     }
@@ -689,7 +785,7 @@ impl Gui {
     }
 }
 
-fn icon_text(name: &str) -> iced::widget::Text<'static> {
+fn icon_text<'a>(name: &str) -> iced::widget::Text<'a> {
     let icon = try_icon(Pack::Lucide, name, Style::Regular, Size::Regular)
         .expect("missing bundled Lucide icon");
     let glyph = char::from_u32(icon.codepoint).unwrap_or('?');
