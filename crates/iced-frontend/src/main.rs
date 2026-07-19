@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use iced::{
-    Element, Font, Length, Task,
-    widget::{button, column, container, row, scrollable, text, text_input, tooltip},
+    Element, Font, Length, Task, Theme,
+    widget::{button, column, container, radio, row, scrollable, text, text_input, tooltip},
 };
 use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{browse, ensure_backend, proto};
@@ -15,6 +15,7 @@ fn main() -> iced::Result {
         let _ = runtime.block_on(ensure_backend());
     }
     iced::application("Iron File", Gui::update, Gui::view)
+        .theme(Gui::theme)
         .run_with(|| (Gui::new(), Gui::load_initial_directory()))
 }
 
@@ -37,6 +38,21 @@ struct Gui {
     entries: Vec<proto::FileEntry>,
     content: String,
     status: String,
+    view: View,
+    color_mode: ColorMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum View {
+    Browser,
+    Preferences,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColorMode {
+    Day,
+    Night,
+    System,
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +61,9 @@ enum Message {
     OpenAddress,
     OpenPath(PathBuf),
     OpenParent,
+    ShowBrowser,
+    ShowPreferences,
+    ColorModeSelected(ColorMode),
     BrowseFinished(Result<BrowseResponse, String>),
     IconFontLoaded(Result<(), iced::font::Error>),
 }
@@ -58,6 +77,8 @@ impl Gui {
             entries: Vec::new(),
             content: String::new(),
             status: "Connecting to backend".into(),
+            view: View::Browser,
+            color_mode: ColorMode::System,
         }
     }
 
@@ -88,11 +109,31 @@ impl Gui {
                     .map(|path| self.open_path(path))
                     .unwrap_or_else(Task::none)
             }
+            Message::ShowBrowser => {
+                self.view = View::Browser;
+                Task::none()
+            }
+            Message::ShowPreferences => {
+                self.view = View::Preferences;
+                Task::none()
+            }
+            Message::ColorModeSelected(color_mode) => {
+                self.color_mode = color_mode;
+                Task::none()
+            }
             Message::BrowseFinished(result) => {
                 self.apply_response(result);
                 Task::none()
             }
             Message::IconFontLoaded(_) => Task::none(),
+        }
+    }
+
+    fn theme(&self) -> Theme {
+        match self.color_mode {
+            ColorMode::Day => Theme::Light,
+            ColorMode::Night => Theme::Dark,
+            ColorMode::System => Theme::default(),
         }
     }
 
@@ -129,6 +170,13 @@ impl Gui {
     }
 
     fn view(&self) -> Element<'_, Message> {
+        match self.view {
+            View::Browser => self.browser_view(),
+            View::Preferences => self.preferences_view(),
+        }
+    }
+
+    fn browser_view(&self) -> Element<'_, Message> {
         let entries = self.entries.iter().fold(column![], |column, entry| {
             let icon = if entry.is_directory {
                 icon_text("folder")
@@ -157,6 +205,11 @@ impl Gui {
                 text("Open path"),
                 tooltip::Position::Bottom,
             ),
+            tooltip(
+                button(icon_text("settings")).on_press(Message::ShowPreferences),
+                text("Preferences"),
+                tooltip::Position::Bottom,
+            ),
         ]
         .spacing(8);
         let browser = row![
@@ -171,6 +224,48 @@ impl Gui {
                 .spacing(12)
                 .padding(16)
                 .height(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn preferences_view(&self) -> Element<'_, Message> {
+        let back_button = tooltip(
+            button(icon_text("arrow-left")).on_press(Message::ShowBrowser),
+            text("Back to files"),
+            tooltip::Position::Bottom,
+        );
+        let options = column![
+            radio(
+                "Day",
+                ColorMode::Day,
+                Some(self.color_mode),
+                Message::ColorModeSelected,
+            ),
+            radio(
+                "Night",
+                ColorMode::Night,
+                Some(self.color_mode),
+                Message::ColorModeSelected,
+            ),
+            radio(
+                "System",
+                ColorMode::System,
+                Some(self.color_mode),
+                Message::ColorModeSelected,
+            ),
+        ]
+        .spacing(12);
+
+        container(
+            column![
+                row![back_button, text("Preferences").size(24)].spacing(12),
+                column![text("Color mode").size(18), options].spacing(10),
+            ]
+            .spacing(28)
+            .padding(16)
+            .width(Length::Fill),
         )
         .width(Length::Fill)
         .height(Length::Fill)
