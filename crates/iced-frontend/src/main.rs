@@ -86,6 +86,7 @@ struct Gui {
     selected_entries: HashSet<PathBuf>,
     paste_buffer: Option<PasteBuffer>,
     pending_delete: Option<Vec<PathBuf>>,
+    delete_confirm_selected: bool,
     selection_anchor: Option<PathBuf>,
     modifiers: keyboard::Modifiers,
     browser_pointer: Point,
@@ -194,6 +195,8 @@ enum Message {
     FileCopyFinished(Result<Vec<PathBuf>, String>),
     ConfirmDelete,
     CancelDelete,
+    SelectDeleteDialogAction(bool),
+    ActivateDeleteDialogAction,
     FileDeleteFinished(Result<Vec<PathBuf>, String>),
     ModifiersChanged(keyboard::Modifiers),
     StartRectangleSelection,
@@ -280,6 +283,21 @@ impl Gui {
                 }
             }
             iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
+                if key == keyboard::Key::Named(keyboard::key::Named::ArrowLeft) =>
+            {
+                Some(Message::SelectDeleteDialogAction(false))
+            }
+            iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
+                if key == keyboard::Key::Named(keyboard::key::Named::ArrowRight) =>
+            {
+                Some(Message::SelectDeleteDialogAction(true))
+            }
+            iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
+                if key == keyboard::Key::Named(keyboard::key::Named::Enter) =>
+            {
+                Some(Message::ActivateDeleteDialogAction)
+            }
+            iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
                 if key == keyboard::Key::Named(keyboard::key::Named::Delete) =>
             {
                 Some(Message::ExecuteBrowserCommand(
@@ -342,6 +360,7 @@ impl Gui {
             selected_entries: HashSet::new(),
             paste_buffer: None,
             pending_delete: None,
+            delete_confirm_selected: false,
             selection_anchor: None,
             modifiers: keyboard::Modifiers::default(),
             browser_pointer: Point::ORIGIN,
@@ -444,12 +463,31 @@ impl Gui {
                 let Some(paths) = self.pending_delete.take() else {
                     return Task::none();
                 };
+                self.delete_confirm_selected = false;
                 self.status = format!("Deleting {} item(s)...", paths.len());
                 Task::perform(delete_entries(paths), Message::FileDeleteFinished)
             }
             Message::CancelDelete => {
                 self.pending_delete = None;
+                self.delete_confirm_selected = false;
                 Task::none()
+            }
+            Message::SelectDeleteDialogAction(delete) => {
+                if self.pending_delete.is_some() {
+                    self.delete_confirm_selected = delete;
+                }
+                Task::none()
+            }
+            Message::ActivateDeleteDialogAction => {
+                if self.pending_delete.is_some() {
+                    if self.delete_confirm_selected {
+                        self.update(Message::ConfirmDelete)
+                    } else {
+                        self.update(Message::CancelDelete)
+                    }
+                } else {
+                    Task::none()
+                }
             }
             Message::FileDeleteFinished(result) => match result {
                 Ok(paths) => {
@@ -996,6 +1034,7 @@ impl Gui {
                     self.status = "Select files or folders to delete".into();
                 } else {
                     self.context_entry = None;
+                    self.delete_confirm_selected = false;
                     self.pending_delete = Some(paths);
                 }
                 Task::none()
@@ -1711,13 +1750,30 @@ impl Gui {
                 .into()
         };
         let delete_confirmation = self.pending_delete.as_ref().map(|paths| {
+            let delete_confirm_selected = self.delete_confirm_selected;
             let dialog = container(
                 column![
                     text(format!("Delete {} item(s)?", paths.len())),
                     text("This permanently deletes the selected files and folders."),
                     row![
-                        button(text("Cancel")).on_press(Message::CancelDelete),
-                        button(text("Delete")).on_press(Message::ConfirmDelete),
+                        button(text("Cancel"))
+                            .style(move |theme, status| {
+                                if !delete_confirm_selected {
+                                    button::primary(theme, status)
+                                } else {
+                                    button::secondary(theme, status)
+                                }
+                            })
+                            .on_press(Message::CancelDelete),
+                        button(text("Delete"))
+                            .style(move |theme, status| {
+                                if delete_confirm_selected {
+                                    button::primary(theme, status)
+                                } else {
+                                    button::secondary(theme, status)
+                                }
+                            })
+                            .on_press(Message::ConfirmDelete),
                     ]
                     .spacing(8),
                 ]
