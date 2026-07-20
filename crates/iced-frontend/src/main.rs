@@ -89,6 +89,7 @@ struct Gui {
     delete_confirm_selected: bool,
     pending_create: Option<(PathBuf, bool)>,
     create_entry_name: String,
+    pending_profile_reset: bool,
     selection_anchor: Option<PathBuf>,
     modifiers: keyboard::Modifiers,
     browser_pointer: Point,
@@ -218,7 +219,9 @@ enum Message {
     SelectProfile(PathBuf),
     NewProfileNameChanged(String),
     CreateProfile,
-    ResetActiveProfile,
+    RequestProfileReset,
+    ConfirmProfileReset,
+    CancelProfileReset,
     ColorModeSelected(ColorMode),
     BrowserLayoutSelected(BrowserLayout),
     BrowserItemSizeChanged(u16),
@@ -373,6 +376,7 @@ impl Gui {
             delete_confirm_selected: false,
             pending_create: None,
             create_entry_name: String::new(),
+            pending_profile_reset: false,
             selection_anchor: None,
             modifiers: keyboard::Modifiers::default(),
             browser_pointer: Point::ORIGIN,
@@ -584,8 +588,17 @@ impl Gui {
                 self.create_profile();
                 Task::none()
             }
-            Message::ResetActiveProfile => {
+            Message::RequestProfileReset => {
+                self.pending_profile_reset = true;
+                Task::none()
+            }
+            Message::ConfirmProfileReset => {
+                self.pending_profile_reset = false;
                 self.reset_active_profile();
+                Task::none()
+            }
+            Message::CancelProfileReset => {
+                self.pending_profile_reset = false;
                 Task::none()
             }
             Message::ColorModeSelected(color_mode) => {
@@ -2362,18 +2375,18 @@ impl Gui {
                 column.push(text(path.display().to_string()))
             });
 
-        container(
+        let page = container(
             column![
                 row![back_button, text("Preferences").size(24)].spacing(12),
                 column![text("Profiles").size(18), profiles, create_profile].spacing(10),
                 column![
                     row![
                         text("Color mode").size(18),
-                        tooltip(
-                            button(icon_text("rotate-ccw")).on_press(Message::ResetActiveProfile),
-                            text("Reset active profile to defaults"),
-                            tooltip::Position::Bottom,
-                        ),
+                        button(
+                            row![icon_text("rotate-ccw").size(16), text("Reset profile")]
+                                .spacing(6)
+                        )
+                        .on_press(Message::RequestProfileReset),
                     ]
                     .spacing(8),
                     options,
@@ -2387,8 +2400,47 @@ impl Gui {
             .width(Length::Fill),
         )
         .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        .height(Length::Fill);
+        let reset_confirmation = self.pending_profile_reset.then(|| {
+            let dialog = container(
+                column![
+                    text("Reset active profile?"),
+                    text("This restores the profile from the repository default configuration."),
+                    row![
+                        button(text("Cancel")).on_press(Message::CancelProfileReset),
+                        button(text("Reset profile")).on_press(Message::ConfirmProfileReset),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(12),
+            )
+            .padding(16)
+            .style(|theme: &Theme| {
+                iced::widget::container::Style::default()
+                    .background(theme.palette().background)
+                    .border(Border {
+                        color: theme.palette().primary,
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    })
+            });
+            stack![
+                mouse_area(Space::new(Length::Fill, Length::Fill))
+                    .on_press(Message::CancelProfileReset),
+                container(dialog)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+        });
+        stack![page]
+            .push_maybe(reset_confirmation)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 }
 
