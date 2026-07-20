@@ -69,6 +69,8 @@ struct Gui {
     pointer_position: Point,
     context_position: Point,
     dragging_sidebar_location: Option<PathBuf>,
+    sidebar_drop_target: Option<PathBuf>,
+    sidebar_drop_at_end: bool,
     last_entry_click: Option<(PathBuf, Instant)>,
     terminal_recommendations: Vec<String>,
     history: Vec<PathBuf>,
@@ -182,6 +184,11 @@ enum Message {
     RemoveContextFolderFromSidebar,
     SidebarPressed(PathBuf),
     SidebarReleased(PathBuf),
+    SidebarDragTarget(PathBuf),
+    SidebarDragTargetCleared(PathBuf),
+    SidebarDragTargetEnd,
+    SidebarDragTargetEndCleared,
+    SidebarReleasedAtEnd,
     MountsLoaded(Result<MountState, String>),
     MountDrive(PathBuf),
     FileOpened(Result<(), String>),
@@ -238,6 +245,8 @@ impl Gui {
             pointer_position: Point::ORIGIN,
             context_position: Point::ORIGIN,
             dragging_sidebar_location: None,
+            sidebar_drop_target: None,
+            sidebar_drop_at_end: false,
             last_entry_click: None,
             terminal_recommendations: recommended_terminal_commands(),
             history: Vec::new(),
@@ -478,9 +487,35 @@ impl Gui {
             }
             Message::SidebarPressed(path) => {
                 self.dragging_sidebar_location = Some(path);
+                self.sidebar_drop_target = None;
+                self.sidebar_drop_at_end = false;
                 Task::none()
             }
             Message::SidebarReleased(path) => self.release_sidebar_location(path),
+            Message::SidebarDragTarget(path) => {
+                if self.dragging_sidebar_location.is_some() {
+                    self.sidebar_drop_target = Some(path);
+                }
+                Task::none()
+            }
+            Message::SidebarDragTargetCleared(path) => {
+                if self.sidebar_drop_target.as_ref() == Some(&path) {
+                    self.sidebar_drop_target = None;
+                }
+                Task::none()
+            }
+            Message::SidebarDragTargetEnd => {
+                if self.dragging_sidebar_location.is_some() {
+                    self.sidebar_drop_target = None;
+                    self.sidebar_drop_at_end = true;
+                }
+                Task::none()
+            }
+            Message::SidebarDragTargetEndCleared => {
+                self.sidebar_drop_at_end = false;
+                Task::none()
+            }
+            Message::SidebarReleasedAtEnd => self.release_sidebar_location_at_end(),
             Message::MountsLoaded(result) => {
                 match result {
                     Ok(state) => {
@@ -817,6 +852,8 @@ impl Gui {
         let Some(source) = self.dragging_sidebar_location.take() else {
             return Task::none();
         };
+        self.sidebar_drop_target = None;
+        self.sidebar_drop_at_end = false;
         if source == target {
             return self.open_path(target);
         }
@@ -835,6 +872,25 @@ impl Gui {
             return Task::none();
         };
         locations.insert(target_index, location);
+        self.save_sidebar_locations(locations);
+        Task::none()
+    }
+
+    fn release_sidebar_location_at_end(&mut self) -> Task<Message> {
+        let Some(source) = self.dragging_sidebar_location.take() else {
+            return Task::none();
+        };
+        self.sidebar_drop_target = None;
+        self.sidebar_drop_at_end = false;
+        let mut locations = self.active_sidebar_locations();
+        let Some(source_index) = locations
+            .iter()
+            .position(|location| location.path == source)
+        else {
+            return Task::none();
+        };
+        let location = locations.remove(source_index);
+        locations.push(location);
         self.save_sidebar_locations(locations);
         Task::none()
     }
@@ -1319,6 +1375,9 @@ impl Gui {
             |column, location| {
                 let is_dragging = self.dragging_sidebar_location.as_ref() == Some(&location.path);
                 let is_open = self.directory_path == location.path;
+                let is_drop_target = self.dragging_sidebar_location.is_some()
+                    && !is_dragging
+                    && self.sidebar_drop_target.as_ref() == Some(&location.path);
                 let label = if is_dragging {
                     format!("Moving {}", location.label)
                 } else {
@@ -1337,10 +1396,32 @@ impl Gui {
                 } else {
                     item
                 };
+                let item: Element<'_, Message> = if is_drop_target {
+                    stack![
+                        item,
+                        container(Space::with_height(Length::Fixed(2.0)))
+                            .width(Length::Fill)
+                            .height(Length::Fixed(2.0))
+                            .style(|theme: &Theme| {
+                                iced::widget::container::Style::default()
+                                    .background(theme.palette().primary)
+                            }),
+                    ]
+                    .width(Length::Fill)
+                    .into()
+                } else {
+                    item.into()
+                };
                 column.push(
                     mouse_area(item)
                         .on_press(Message::SidebarPressed(location.path.clone()))
-                        .on_release(Message::SidebarReleased(location.path)),
+                        .on_release(Message::SidebarReleased(location.path.clone()))
+                        .on_right_press(Message::ShowEntryContext {
+                            path: location.path.clone(),
+                            is_directory: true,
+                        })
+                        .on_enter(Message::SidebarDragTarget(location.path.clone()))
+                        .on_exit(Message::SidebarDragTargetCleared(location.path)),
                 )
             },
         );
@@ -1384,7 +1465,28 @@ impl Gui {
                 },
             );
         let mounts = column![text("Mounts").size(16), mounted, unmounted].spacing(6);
-        let sidebar_content = column![locations, mounts].spacing(20);
+        let drop_zone_height = if self.dragging_sidebar_location.is_some() {
+            20.0
+        } else {
+            4.0
+        };
+        let end_drop_zone = mouse_area(
+            container(Space::with_height(Length::Fixed(drop_zone_height)))
+                .width(Length::Fill)
+                .height(Length::Fixed(drop_zone_height))
+                .style(move |theme: &Theme| {
+                    if self.sidebar_drop_at_end {
+                        iced::widget::container::Style::default()
+                            .background(theme.palette().primary)
+                    } else {
+                        iced::widget::container::Style::default()
+                    }
+                }),
+        )
+        .on_release(Message::SidebarReleasedAtEnd)
+        .on_enter(Message::SidebarDragTargetEnd)
+        .on_exit(Message::SidebarDragTargetEndCleared);
+        let sidebar_content = column![locations, end_drop_zone, mounts].spacing(20);
         container(scrollable(sidebar_content))
             .width(Length::Fixed(f32::from(self.sidebar_width())))
             .height(Length::Fill)
