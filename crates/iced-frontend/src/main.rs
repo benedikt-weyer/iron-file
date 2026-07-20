@@ -1315,10 +1315,12 @@ impl Gui {
     }
 
     fn entry_icon<'a>(&self, entry: &proto::FileEntry, size: u16) -> Element<'a, Message> {
+        let opacity = entry.name.starts_with('.').then_some(0.55).unwrap_or(1.0);
         if let Some(handle) = self.thumbnail_handles.get(&PathBuf::from(&entry.path)) {
             image(handle.clone())
                 .width(Length::Fixed(f32::from(size)))
                 .height(Length::Fixed(f32::from(size)))
+                .opacity(opacity)
                 .into()
         } else if let Some(path) = self
             .entry_icons
@@ -1328,11 +1330,15 @@ impl Gui {
             svg(svg::Handle::from_path(path))
                 .width(Length::Fixed(f32::from(size)))
                 .height(Length::Fixed(f32::from(size)))
+                .opacity(opacity)
                 .into()
         } else {
-            icon_text(if entry.is_directory { "folder" } else { "file" })
-                .size(size)
-                .into()
+            let icon = icon_text(if entry.is_directory { "folder" } else { "file" }).size(size);
+            if entry.name.starts_with('.') {
+                icon.color(Color::from_rgba8(128, 128, 128, opacity)).into()
+            } else {
+                icon.into()
+            }
         }
     }
 

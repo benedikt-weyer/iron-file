@@ -231,6 +231,7 @@ fn directory_entries(path: &Path) -> Result<Vec<FileEntry>, String> {
         right
             .is_directory
             .cmp(&left.is_directory)
+            .then_with(|| left.name.starts_with('.').cmp(&right.name.starts_with('.')))
             .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
     });
 
