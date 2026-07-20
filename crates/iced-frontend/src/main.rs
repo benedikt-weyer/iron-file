@@ -609,6 +609,7 @@ impl Gui {
                     .insert(path.clone(), themed_entry_icon_path(&icon_theme, &entry));
                 let is_directory = entry.is_directory;
                 self.entries.push(entry);
+                sort_entries(&mut self.entries);
                 self.status = format!("{} entries", self.entries.len());
                 if is_directory {
                     Task::none()
@@ -1713,6 +1714,16 @@ fn icon_text<'a>(name: &str) -> iced::widget::Text<'a> {
     text(glyph.to_string())
         .size(18)
         .font(Font::with_name(icon.family))
+}
+
+fn sort_entries(entries: &mut [proto::FileEntry]) {
+    entries.sort_by_key(|entry| {
+        (
+            !entry.is_directory,
+            entry.name.starts_with('.'),
+            entry.name.to_lowercase(),
+        )
+    });
 }
 
 fn available_icon_themes() -> Vec<String> {

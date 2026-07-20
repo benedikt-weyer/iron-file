@@ -227,15 +227,19 @@ fn directory_entries(path: &Path) -> Result<Vec<FileEntry>, String> {
             }
         })
         .collect::<Vec<_>>();
-    files.sort_by(|left, right| {
-        right
-            .is_directory
-            .cmp(&left.is_directory)
-            .then_with(|| left.name.starts_with('.').cmp(&right.name.starts_with('.')))
-            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
-    });
+    sort_file_entries(&mut files);
 
     Ok(files)
+}
+
+fn sort_file_entries(entries: &mut [FileEntry]) {
+    entries.sort_by_key(|entry| {
+        (
+            !entry.is_directory,
+            entry.name.starts_with('.'),
+            entry.name.to_lowercase(),
+        )
+    });
 }
 
 fn thumbnail_for(path: &Path, directory: &Path) -> Result<ThumbnailOutcome, String> {
@@ -313,6 +317,51 @@ mod tests {
         assert_eq!(
             thumbnail_filename(Path::new("/tmp/image.png")),
             "0fef0cc8ed6b0e98686a7ae869b2eda3aafce32e.png"
+        );
+    }
+
+    #[test]
+    fn hidden_entries_sort_last_within_their_category() {
+        let mut entries = vec![
+            FileEntry {
+                name: ".hidden-file".into(),
+                is_directory: false,
+                path: String::new(),
+                thumbnail_path: String::new(),
+            },
+            FileEntry {
+                name: "visible-file".into(),
+                is_directory: false,
+                path: String::new(),
+                thumbnail_path: String::new(),
+            },
+            FileEntry {
+                name: ".hidden-folder".into(),
+                is_directory: true,
+                path: String::new(),
+                thumbnail_path: String::new(),
+            },
+            FileEntry {
+                name: "visible-folder".into(),
+                is_directory: true,
+                path: String::new(),
+                thumbnail_path: String::new(),
+            },
+        ];
+
+        sort_file_entries(&mut entries);
+
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "visible-folder",
+                ".hidden-folder",
+                "visible-file",
+                ".hidden-file"
+            ]
         );
     }
 }
