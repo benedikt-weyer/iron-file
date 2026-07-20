@@ -8,8 +8,8 @@ use std::{
 use iced::{
     Border, Color, Element, Font, Length, Point, Task, Theme, mouse,
     widget::{
-        Space, button, column, container, mouse_area, radio, responsive, row, scrollable, slider,
-        stack, text, text_input, toggler, tooltip,
+        Space, button, column, container, mouse_area, pick_list, radio, responsive, row,
+        scrollable, slider, stack, text, text_input, toggler, tooltip,
     },
 };
 use iconflow::{Pack, Size, Style, fonts, try_icon};
@@ -65,7 +65,25 @@ struct Gui {
     context_position: Point,
     dragging_sidebar_location: Option<PathBuf>,
     last_entry_click: Option<(PathBuf, Instant)>,
+    terminal_recommendations: Vec<String>,
 }
+
+const DEFAULT_TERMINAL_CHOICE: &str = "System default";
+const CUSTOM_TERMINAL_CHOICE: &str = "Custom command";
+const RECOMMENDED_TERMINALS: &[&str] = &[
+    "gnome-terminal",
+    "konsole",
+    "xfce4-terminal",
+    "mate-terminal",
+    "lxterminal",
+    "kitty",
+    "alacritty",
+    "wezterm",
+    "foot",
+    "urxvt",
+    "xterm",
+    "tilix",
+];
 
 #[derive(Debug, Clone)]
 struct Drive {
@@ -122,6 +140,7 @@ enum Message {
     BrowserItemSizeChanged(u16),
     PreviewToggled(bool),
     SingleClickFoldersToggled(bool),
+    TerminalChoiceSelected(String),
     TerminalCommandChanged(String),
     ShowEntryContext {
         path: PathBuf,
@@ -189,6 +208,7 @@ impl Gui {
             context_position: Point::ORIGIN,
             dragging_sidebar_location: None,
             last_entry_click: None,
+            terminal_recommendations: recommended_terminal_commands(),
         }
     }
 
@@ -288,6 +308,26 @@ impl Gui {
             Message::SingleClickFoldersToggled(single_click_opens_folders) => {
                 let mut browser = self.active_browser_settings();
                 browser.single_click_opens_folders = single_click_opens_folders;
+                self.save_browser_settings(browser);
+                Task::none()
+            }
+            Message::TerminalChoiceSelected(choice) => {
+                let mut browser = self.active_browser_settings();
+                browser.terminal_command = if choice == DEFAULT_TERMINAL_CHOICE {
+                    "default".into()
+                } else if choice == CUSTOM_TERMINAL_CHOICE {
+                    if browser.terminal_command == "default"
+                        || self
+                            .terminal_recommendations
+                            .contains(&browser.terminal_command)
+                    {
+                        String::new()
+                    } else {
+                        browser.terminal_command
+                    }
+                } else {
+                    choice
+                };
                 self.save_browser_settings(browser);
                 Task::none()
             }
@@ -438,6 +478,26 @@ impl Gui {
             .and_then(|path| self.profiles.iter().find(|profile| profile.path == path))
             .map(|profile| profile.browser.clone())
             .unwrap_or_else(iron_file_common::config::default_browser_settings)
+    }
+
+    fn terminal_choices(&self) -> Vec<String> {
+        let mut choices = vec![DEFAULT_TERMINAL_CHOICE.into()];
+        choices.extend(self.terminal_recommendations.clone());
+        choices.push(CUSTOM_TERMINAL_CHOICE.into());
+        choices
+    }
+
+    fn selected_terminal_choice(&self, browser: &BrowserSettings) -> String {
+        if browser.terminal_command == "default" {
+            DEFAULT_TERMINAL_CHOICE.into()
+        } else if self
+            .terminal_recommendations
+            .contains(&browser.terminal_command)
+        {
+            browser.terminal_command.clone()
+        } else {
+            CUSTOM_TERMINAL_CHOICE.into()
+        }
     }
 
     fn handle_entry_click(&mut self, path: PathBuf, is_directory: bool) -> Task<Message> {
@@ -1124,9 +1184,20 @@ impl Gui {
             toggler(browser.single_click_opens_folders)
                 .label("Open folders with one click")
                 .on_toggle(Message::SingleClickFoldersToggled),
-            text_input("Terminal command", &browser.terminal_command)
-                .on_input(Message::TerminalCommandChanged)
-                .width(Length::Fill),
+            pick_list(
+                self.terminal_choices(),
+                Some(self.selected_terminal_choice(&browser)),
+                Message::TerminalChoiceSelected,
+            )
+            .width(Length::Fill),
+            text_input(
+                "Custom terminal command",
+                (self.selected_terminal_choice(&browser) == CUSTOM_TERMINAL_CHOICE)
+                    .then_some(browser.terminal_command.as_str())
+                    .unwrap_or_default(),
+            )
+            .on_input(Message::TerminalCommandChanged)
+            .width(Length::Fill),
         ]
         .spacing(10);
         let profiles = self
@@ -1364,15 +1435,23 @@ async fn open_terminal(path: PathBuf, configured_command: String) -> Result<(), 
 
     #[cfg(target_os = "linux")]
     {
-        if let Some(command) = gnome_default_terminal_command() {
+        if let Some(command) = gnome_default_terminal_command()
+            .filter(|command| terminal_command_is_available(command))
+        {
             return spawn_terminal_command(&command, &path);
         }
-        Command::new("xdg-terminal-exec")
-            .arg("--working-directory")
-            .arg(&path)
-            .spawn()
-            .map(|_| ())
-            .map_err(|error| format!("Could not open a terminal in {}: {error}", path.display()))
+        for command in ["xdg-terminal-exec", "x-terminal-emulator"]
+            .into_iter()
+            .chain(RECOMMENDED_TERMINALS.iter().copied())
+        {
+            if terminal_command_is_available(command) {
+                return spawn_terminal_command(command, &path);
+            }
+        }
+        Err(format!(
+            "No supported terminal command is available for {}",
+            path.display()
+        ))
     }
 
     #[cfg(target_os = "macos")]
@@ -1407,6 +1486,26 @@ async fn open_terminal(path: PathBuf, configured_command: String) -> Result<(), 
     }
 }
 
+#[cfg(target_os = "linux")]
+fn recommended_terminal_commands() -> Vec<String> {
+    let script = format!(
+        "for app in {}; do command -v \"$app\" 2>/dev/null; done",
+        RECOMMENDED_TERMINALS.join(" ")
+    );
+    let Ok(output) = Command::new("sh").args(["-c", &script]).output() else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn recommended_terminal_commands() -> Vec<String> {
+    Vec::new()
+}
+
 fn spawn_terminal_command(command: &str, path: &Path) -> Result<(), String> {
     Command::new("sh")
         .args(["-c", command])
@@ -1434,6 +1533,20 @@ fn gnome_default_terminal_command() -> Option<String> {
         .trim_matches('\'')
         .to_owned();
     (!command.is_empty()).then_some(command)
+}
+
+#[cfg(target_os = "linux")]
+fn terminal_command_is_available(command: &str) -> bool {
+    let Some(executable) = command.split_whitespace().next() else {
+        return false;
+    };
+    let executable_path = Path::new(executable);
+    if executable_path.components().count() > 1 {
+        return executable_path.is_file();
+    }
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|directory| directory.join(executable).is_file())
+    })
 }
 
 async fn default_file_opener(path: PathBuf) -> Result<String, String> {
