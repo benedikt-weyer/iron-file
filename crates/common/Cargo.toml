@@ -6,10 +6,12 @@ license.workspace = true
 
 [dependencies]
 fs2 = "0.4"
+async-stream = "0.3"
 hyper-util = { version = "0.1", features = ["tokio"] }
 prost = "0.14"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["net", "time"] }
+tokio-stream = "0.1"
 tonic = { version = "0.14", features = ["transport"] }
 tonic-prost = "0.14"
 toml = "0.8"

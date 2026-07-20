@@ -17,7 +17,7 @@ use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{
     browse_with_thumbnails,
     config::{BrowserLayout, BrowserSettings, ColorMode, ConfigStore, Profile, SidebarLocation},
-    create_thumbnail, ensure_backend, pipe_backend_logs, proto,
+    create_thumbnail, ensure_backend, pipe_backend_logs, proto, stream_directory,
 };
 use proto::{BrowseResponse, browse_response::Payload};
 use serde::Deserialize;
@@ -197,6 +197,10 @@ enum Message {
     ThumbnailGenerated {
         path: PathBuf,
         thumbnail_path: Result<String, String>,
+    },
+    DirectoryEntryLoaded {
+        directory: PathBuf,
+        entry: Result<proto::FileEntry, String>,
     },
     BrowseFinished {
         result: Result<BrowseResponse, String>,
@@ -579,6 +583,42 @@ impl Gui {
                 eprintln!("[iron-file thumbnails] {error}");
                 Task::none()
             }
+            Message::DirectoryEntryLoaded {
+                directory,
+                entry: Ok(entry),
+            } => {
+                if self.directory_path != directory {
+                    return Task::none();
+                }
+                let path = PathBuf::from(&entry.path);
+                let icon_theme = self.active_browser_settings().icon_theme;
+                self.entry_icons
+                    .insert(path.clone(), themed_entry_icon_path(&icon_theme, &entry));
+                let is_directory = entry.is_directory;
+                self.entries.push(entry);
+                self.status = format!("{} entries", self.entries.len());
+                if is_directory {
+                    Task::none()
+                } else {
+                    let thumbnail_directory = self.active_browser_settings().thumbnail_location;
+                    Task::perform(
+                        create_thumbnail(path.clone(), thumbnail_directory),
+                        move |thumbnail_path| Message::ThumbnailGenerated {
+                            path: path.clone(),
+                            thumbnail_path,
+                        },
+                    )
+                }
+            }
+            Message::DirectoryEntryLoaded {
+                directory,
+                entry: Err(error),
+            } => {
+                if self.directory_path == directory {
+                    self.status = format!("Could not load folder contents: {error}");
+                }
+                Task::none()
+            }
             Message::BrowseFinished { result, history } => self.apply_response(result, history),
             Message::IconFontLoaded(_) => Task::none(),
         }
@@ -940,27 +980,19 @@ impl Gui {
                 self.address = response.path.clone();
                 self.directory_path = PathBuf::from(response.path);
                 self.record_history(self.directory_path.clone(), history);
-                self.entries = directory.entries;
+                let _ = directory;
+                self.entries.clear();
                 self.thumbnail_handles.clear();
                 self.refresh_entry_icons();
                 self.content.clear();
-                self.status = format!("{} entries", self.entries.len());
-                let thumbnail_directory = self.active_browser_settings().thumbnail_location;
-                Task::batch(
-                    self.entries
-                        .iter()
-                        .filter(|entry| !entry.is_directory)
-                        .map(|entry| {
-                            let path = PathBuf::from(&entry.path);
-                            Task::perform(
-                                create_thumbnail(path.clone(), thumbnail_directory.clone()),
-                                move |thumbnail_path| Message::ThumbnailGenerated {
-                                    path: path.clone(),
-                                    thumbnail_path,
-                                },
-                            )
-                        }),
-                )
+                self.status = "Loading folder contents".into();
+                let directory = self.directory_path.clone();
+                Task::run(stream_directory(directory.clone()), move |entry| {
+                    Message::DirectoryEntryLoaded {
+                        directory: directory.clone(),
+                        entry,
+                    }
+                })
             }
             Some(Payload::File(file)) => {
                 self.address = response.path;

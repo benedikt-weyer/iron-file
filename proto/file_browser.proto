@@ -4,6 +4,7 @@ package ironfile.v1;
 
 service FileBrowser {
   rpc OpenPath(OpenPathRequest) returns (BrowseResponse);
+  rpc ListDirectory(ListDirectoryRequest) returns (stream FileEntry);
   rpc CreateThumbnail(ThumbnailRequest) returns (ThumbnailResponse);
   rpc StreamLogs(LogStreamRequest) returns (stream LogEntry);
 }
@@ -34,6 +35,10 @@ message ThumbnailRequest {
 message ThumbnailResponse {
   string path = 1;
   string thumbnail_path = 2;
+}
+
+message ListDirectoryRequest {
+  string path = 1;
 }
 
 message Directory {

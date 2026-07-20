@@ -20,8 +20,8 @@ use tokio_stream::{
 use tonic::{Request, Response, Status, transport::Server};
 
 use proto::{
-    BrowseResponse, BrowserError, Directory, FileContent, FileEntry, LogEntry, LogStreamRequest,
-    OpenPathRequest, ThumbnailRequest, ThumbnailResponse,
+    BrowseResponse, BrowserError, Directory, FileContent, FileEntry, ListDirectoryRequest,
+    LogEntry, LogStreamRequest, OpenPathRequest, ThumbnailRequest, ThumbnailResponse,
     browse_response::Payload,
     file_browser_server::{FileBrowser, FileBrowserServer},
 };
@@ -41,6 +41,7 @@ enum ThumbnailOutcome {
 
 #[tonic::async_trait]
 impl FileBrowser for FileBrowserService {
+    type ListDirectoryStream = Pin<Box<dyn Stream<Item = Result<FileEntry, Status>> + Send>>;
     type StreamLogsStream = Pin<Box<dyn Stream<Item = Result<LogEntry, Status>> + Send>>;
 
     async fn open_path(
@@ -55,6 +56,18 @@ impl FileBrowser for FileBrowserService {
             self.log(format!("Request failed: {}", error.message));
         }
         Ok(Response::new(response))
+    }
+
+    async fn list_directory(
+        &self,
+        request: Request<ListDirectoryRequest>,
+    ) -> Result<Response<Self::ListDirectoryStream>, Status> {
+        let path = PathBuf::from(request.into_inner().path);
+        self.log(format!("Listing directory {}", path.display()));
+        let entries = directory_entries(&path).map_err(Status::internal)?;
+        Ok(Response::new(Box::pin(tokio_stream::iter(
+            entries.into_iter().map(Ok),
+        ))))
     }
 
     async fn create_thumbnail(
@@ -182,7 +195,9 @@ async fn bind_singleton_socket(path: &Path) -> io::Result<UnixListener> {
 fn browse(path: PathBuf) -> BrowseResponse {
     let display_path = path.display().to_string();
     let payload = match std::fs::metadata(&path) {
-        Ok(metadata) if metadata.is_dir() => directory_payload(&path),
+        Ok(metadata) if metadata.is_dir() => Payload::Directory(Directory {
+            entries: Vec::new(),
+        }),
         Ok(metadata) if metadata.is_file() => file_payload(&path, metadata.len()),
         Ok(_) => error_payload("Unsupported filesystem entry"),
         Err(error) => error_payload(error.to_string()),
@@ -194,10 +209,10 @@ fn browse(path: PathBuf) -> BrowseResponse {
     }
 }
 
-fn directory_payload(path: &Path) -> Payload {
+fn directory_entries(path: &Path) -> Result<Vec<FileEntry>, String> {
     let entries = match std::fs::read_dir(path) {
         Ok(entries) => entries,
-        Err(error) => return error_payload(error.to_string()),
+        Err(error) => return Err(error.to_string()),
     };
 
     let mut files = entries
@@ -219,7 +234,7 @@ fn directory_payload(path: &Path) -> Payload {
             .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
     });
 
-    Payload::Directory(Directory { entries: files })
+    Ok(files)
 }
 
 fn thumbnail_for(path: &Path, directory: &Path) -> Result<ThumbnailOutcome, String> {

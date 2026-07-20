@@ -23,7 +23,8 @@ pub mod proto {
 }
 
 use proto::{
-    LogStreamRequest, OpenPathRequest, ThumbnailRequest, file_browser_client::FileBrowserClient,
+    ListDirectoryRequest, LogStreamRequest, OpenPathRequest, ThumbnailRequest,
+    file_browser_client::FileBrowserClient,
 };
 
 const BACKEND_MODE_ENV: &str = "IRON_FILE_BACKEND_MODE";
@@ -89,6 +90,42 @@ pub async fn create_thumbnail(
         .await
         .map(|response| response.into_inner().thumbnail_path)
         .map_err(|error| error.to_string())
+}
+
+pub fn stream_directory(
+    path: PathBuf,
+) -> impl tokio_stream::Stream<Item = Result<proto::FileEntry, String>> {
+    async_stream::stream! {
+        let mut client = match connect_or_start().await {
+            Ok(client) => client,
+            Err(error) => {
+                yield Err(error);
+                return;
+            }
+        };
+        let mut entries = match client
+            .list_directory(Request::new(ListDirectoryRequest {
+                path: path.display().to_string(),
+            }))
+            .await
+        {
+            Ok(response) => response.into_inner(),
+            Err(error) => {
+                yield Err(error.to_string());
+                return;
+            }
+        };
+        loop {
+            match entries.message().await {
+                Ok(Some(entry)) => yield Ok(entry),
+                Ok(None) => break,
+                Err(error) => {
+                    yield Err(error.to_string());
+                    break;
+                }
+            }
+        }
+    }
 }
 
 pub async fn ensure_backend() -> Result<(), String> {
