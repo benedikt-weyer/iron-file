@@ -21,7 +21,7 @@ use tonic::{Request, Response, Status, transport::Server};
 
 use proto::{
     BrowseResponse, BrowserError, Directory, FileContent, FileEntry, LogEntry, LogStreamRequest,
-    OpenPathRequest,
+    OpenPathRequest, ThumbnailRequest, ThumbnailResponse,
     browse_response::Payload,
     file_browser_server::{FileBrowser, FileBrowserServer},
 };
@@ -31,6 +31,12 @@ const MAX_PREVIEW_BYTES: u64 = 1_000_000;
 #[derive(Clone)]
 struct FileBrowserService {
     logs: broadcast::Sender<String>,
+}
+
+enum ThumbnailOutcome {
+    Cached(PathBuf),
+    Generated(PathBuf),
+    NotImage,
 }
 
 #[tonic::async_trait]
@@ -43,14 +49,46 @@ impl FileBrowser for FileBrowserService {
     ) -> Result<Response<BrowseResponse>, Status> {
         let request = request.into_inner();
         let path = PathBuf::from(request.path);
-        let thumbnail_directory = (!request.thumbnail_directory.is_empty())
-            .then(|| PathBuf::from(request.thumbnail_directory));
         self.log(format!("Opening {}", path.display()));
-        let response = browse(path, thumbnail_directory.as_deref());
+        let response = browse(path);
         if let Some(Payload::Error(error)) = &response.payload {
             self.log(format!("Request failed: {}", error.message));
         }
         Ok(Response::new(response))
+    }
+
+    async fn create_thumbnail(
+        &self,
+        request: Request<ThumbnailRequest>,
+    ) -> Result<Response<ThumbnailResponse>, Status> {
+        let request = request.into_inner();
+        let path = PathBuf::from(request.path);
+        self.log(format!("Thumbnail requested for {}", path.display()));
+        let thumbnail_path = match thumbnail_for(&path, Path::new(&request.thumbnail_directory)) {
+            Ok(ThumbnailOutcome::Cached(thumbnail_path)) => {
+                self.log(format!("Thumbnail cache hit for {}", path.display()));
+                thumbnail_path.display().to_string()
+            }
+            Ok(ThumbnailOutcome::Generated(thumbnail_path)) => {
+                self.log(format!("Thumbnail generated for {}", path.display()));
+                thumbnail_path.display().to_string()
+            }
+            Ok(ThumbnailOutcome::NotImage) => {
+                self.log(format!(
+                    "Thumbnail skipped for {}: not an image",
+                    path.display()
+                ));
+                String::new()
+            }
+            Err(error) => {
+                self.log(format!("Thumbnail failed for {}: {error}", path.display()));
+                String::new()
+            }
+        };
+        Ok(Response::new(ThumbnailResponse {
+            path: path.display().to_string(),
+            thumbnail_path,
+        }))
     }
 
     async fn stream_logs(
@@ -141,10 +179,10 @@ async fn bind_singleton_socket(path: &Path) -> io::Result<UnixListener> {
     }
 }
 
-fn browse(path: PathBuf, thumbnail_directory: Option<&Path>) -> BrowseResponse {
+fn browse(path: PathBuf) -> BrowseResponse {
     let display_path = path.display().to_string();
     let payload = match std::fs::metadata(&path) {
-        Ok(metadata) if metadata.is_dir() => directory_payload(&path, thumbnail_directory),
+        Ok(metadata) if metadata.is_dir() => directory_payload(&path),
         Ok(metadata) if metadata.is_file() => file_payload(&path, metadata.len()),
         Ok(_) => error_payload("Unsupported filesystem entry"),
         Err(error) => error_payload(error.to_string()),
@@ -156,7 +194,7 @@ fn browse(path: PathBuf, thumbnail_directory: Option<&Path>) -> BrowseResponse {
     }
 }
 
-fn directory_payload(path: &Path, thumbnail_directory: Option<&Path>) -> Payload {
+fn directory_payload(path: &Path) -> Payload {
     let entries = match std::fs::read_dir(path) {
         Ok(entries) => entries,
         Err(error) => return error_payload(error.to_string()),
@@ -170,10 +208,7 @@ fn directory_payload(path: &Path, thumbnail_directory: Option<&Path>) -> Payload
                 name: entry.file_name().to_string_lossy().into_owned(),
                 is_directory: path.is_dir(),
                 path: path.display().to_string(),
-                thumbnail_path: thumbnail_directory
-                    .and_then(|directory| thumbnail_for(&path, directory))
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_default(),
+                thumbnail_path: String::new(),
             }
         })
         .collect::<Vec<_>>();
@@ -187,36 +222,46 @@ fn directory_payload(path: &Path, thumbnail_directory: Option<&Path>) -> Payload
     Payload::Directory(Directory { entries: files })
 }
 
-fn thumbnail_for(path: &Path, directory: &Path) -> Option<PathBuf> {
+fn thumbnail_for(path: &Path, directory: &Path) -> Result<ThumbnailOutcome, String> {
     if !path.is_file() {
-        return None;
+        return Ok(ThumbnailOutcome::NotImage);
     }
     let thumbnail_path = directory.join(thumbnail_filename(path));
     if thumbnail_path.is_file() {
-        return Some(thumbnail_path);
+        return Ok(ThumbnailOutcome::Cached(thumbnail_path));
     }
 
-    let image = ImageReader::open(path)
-        .ok()?
-        .with_guessed_format()
-        .ok()?
-        .decode()
-        .ok()?;
-    std::fs::create_dir_all(directory).ok()?;
+    let reader = match ImageReader::open(path).and_then(|reader| reader.with_guessed_format()) {
+        Ok(reader) => reader,
+        Err(_) => return Ok(ThumbnailOutcome::NotImage),
+    };
+    let image = match reader.decode() {
+        Ok(image) => image,
+        Err(_) => return Ok(ThumbnailOutcome::NotImage),
+    };
+    std::fs::create_dir_all(directory)
+        .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
     let temporary_path = thumbnail_path.with_extension("tmp");
-    let file = File::create(&temporary_path).ok()?;
+    let file = File::create(&temporary_path)
+        .map_err(|error| format!("could not create {}: {error}", temporary_path.display()))?;
     image
         .thumbnail(256, 256)
         .write_to(&mut BufWriter::new(file), ImageFormat::Png)
-        .ok()?;
-    std::fs::rename(&temporary_path, &thumbnail_path).ok()?;
-    Some(thumbnail_path)
+        .map_err(|error| format!("could not write {}: {error}", temporary_path.display()))?;
+    std::fs::rename(&temporary_path, &thumbnail_path).map_err(|error| {
+        format!(
+            "could not move {} to {}: {error}",
+            temporary_path.display(),
+            thumbnail_path.display()
+        )
+    })?;
+    Ok(ThumbnailOutcome::Generated(thumbnail_path))
 }
 
 fn thumbnail_filename(path: &Path) -> String {
     let mut hasher = Sha1::new();
     hasher.update(path.as_os_str().as_encoded_bytes());
-    format!("{:x}", hasher.finalize())
+    format!("{:x}.png", hasher.finalize())
 }
 
 fn file_payload(path: &Path, size: u64) -> Payload {
@@ -251,7 +296,7 @@ mod tests {
     fn thumbnail_filename_is_the_sha1_of_the_full_path() {
         assert_eq!(
             thumbnail_filename(Path::new("/tmp/image.png")),
-            "0fef0cc8ed6b0e98686a7ae869b2eda3aafce32e"
+            "0fef0cc8ed6b0e98686a7ae869b2eda3aafce32e.png"
         );
     }
 }

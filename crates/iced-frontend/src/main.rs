@@ -17,7 +17,7 @@ use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{
     browse_with_thumbnails,
     config::{BrowserLayout, BrowserSettings, ColorMode, ConfigStore, Profile, SidebarLocation},
-    ensure_backend, pipe_backend_logs, proto,
+    create_thumbnail, ensure_backend, pipe_backend_logs, proto,
 };
 use proto::{BrowseResponse, browse_response::Payload};
 use serde::Deserialize;
@@ -76,6 +76,7 @@ struct Gui {
     sidebar_resize: Option<(f32, u16, u16)>,
     icon_themes: Vec<String>,
     entry_icons: HashMap<PathBuf, Option<PathBuf>>,
+    thumbnail_handles: HashMap<PathBuf, image::Handle>,
 }
 
 const DEFAULT_TERMINAL_CHOICE: &str = "System default";
@@ -186,6 +187,10 @@ enum Message {
     FileOpened(Result<(), String>),
     TerminalOpened(Result<(), String>),
     BackendLogPipeEnded(Result<(), String>),
+    ThumbnailGenerated {
+        path: PathBuf,
+        thumbnail_path: Result<String, String>,
+    },
     BrowseFinished {
         result: Result<BrowseResponse, String>,
         history: HistoryRequest,
@@ -240,6 +245,7 @@ impl Gui {
             sidebar_resize: None,
             icon_themes: available_icon_themes(),
             entry_icons: HashMap::new(),
+            thumbnail_handles: HashMap::new(),
         }
     }
 
@@ -508,10 +514,37 @@ impl Gui {
                 Task::none()
             }
             Message::BackendLogPipeEnded(Ok(())) => Task::none(),
-            Message::BrowseFinished { result, history } => {
-                self.apply_response(result, history);
+            Message::ThumbnailGenerated {
+                path,
+                thumbnail_path: Ok(thumbnail_path),
+            } => {
+                if !thumbnail_path.is_empty()
+                    && let Some(entry) = self
+                        .entries
+                        .iter_mut()
+                        .find(|entry| PathBuf::from(&entry.path) == path)
+                {
+                    entry.thumbnail_path = thumbnail_path;
+                }
+                if let Some(entry) = self
+                    .entries
+                    .iter()
+                    .find(|entry| PathBuf::from(&entry.path) == path)
+                    && let Ok(bytes) = fs::read(&entry.thumbnail_path)
+                {
+                    self.thumbnail_handles
+                        .insert(path, image::Handle::from_bytes(bytes));
+                }
                 Task::none()
             }
+            Message::ThumbnailGenerated {
+                thumbnail_path: Err(error),
+                ..
+            } => {
+                eprintln!("[iron-file thumbnails] {error}");
+                Task::none()
+            }
+            Message::BrowseFinished { result, history } => self.apply_response(result, history),
             Message::IconFontLoaded(_) => Task::none(),
         }
     }
@@ -833,12 +866,16 @@ impl Gui {
         )
     }
 
-    fn apply_response(&mut self, result: Result<BrowseResponse, String>, history: HistoryRequest) {
+    fn apply_response(
+        &mut self,
+        result: Result<BrowseResponse, String>,
+        history: HistoryRequest,
+    ) -> Task<Message> {
         let response = match result {
             Ok(response) => response,
             Err(error) => {
                 self.status = error;
-                return;
+                return Task::none();
             }
         };
 
@@ -848,17 +885,41 @@ impl Gui {
                 self.directory_path = PathBuf::from(response.path);
                 self.record_history(self.directory_path.clone(), history);
                 self.entries = directory.entries;
+                self.thumbnail_handles.clear();
                 self.refresh_entry_icons();
                 self.content.clear();
                 self.status = format!("{} entries", self.entries.len());
+                let thumbnail_directory = self.active_browser_settings().thumbnail_location;
+                Task::batch(
+                    self.entries
+                        .iter()
+                        .filter(|entry| !entry.is_directory)
+                        .map(|entry| {
+                            let path = PathBuf::from(&entry.path);
+                            Task::perform(
+                                create_thumbnail(path.clone(), thumbnail_directory.clone()),
+                                move |thumbnail_path| Message::ThumbnailGenerated {
+                                    path: path.clone(),
+                                    thumbnail_path,
+                                },
+                            )
+                        }),
+                )
             }
             Some(Payload::File(file)) => {
                 self.address = response.path;
                 self.content = file.content;
                 self.status = "File preview".into();
+                Task::none()
             }
-            Some(Payload::Error(error)) => self.status = error.message,
-            None => self.status = "Backend returned an invalid response".into(),
+            Some(Payload::Error(error)) => {
+                self.status = error.message;
+                Task::none()
+            }
+            None => {
+                self.status = "Backend returned an invalid response".into();
+                Task::none()
+            }
         }
     }
 
@@ -1166,8 +1227,8 @@ impl Gui {
     }
 
     fn entry_icon<'a>(&self, entry: &proto::FileEntry, size: u16) -> Element<'a, Message> {
-        if !entry.thumbnail_path.is_empty() {
-            image(image::Handle::from_path(&entry.thumbnail_path))
+        if let Some(handle) = self.thumbnail_handles.get(&PathBuf::from(&entry.path)) {
+            image(handle.clone())
                 .width(Length::Fixed(f32::from(size)))
                 .height(Length::Fixed(f32::from(size)))
                 .into()

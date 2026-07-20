@@ -22,7 +22,9 @@ pub mod proto {
     tonic::include_proto!("ironfile.v1");
 }
 
-use proto::{LogStreamRequest, OpenPathRequest, file_browser_client::FileBrowserClient};
+use proto::{
+    LogStreamRequest, OpenPathRequest, ThumbnailRequest, file_browser_client::FileBrowserClient,
+};
 
 const BACKEND_MODE_ENV: &str = "IRON_FILE_BACKEND_MODE";
 const BACKEND_BIN_ENV: &str = "IRON_FILE_BACKEND_BIN";
@@ -71,6 +73,21 @@ pub async fn browse_with_thumbnails(
         }))
         .await
         .map(|response| response.into_inner())
+        .map_err(|error| error.to_string())
+}
+
+pub async fn create_thumbnail(
+    path: PathBuf,
+    thumbnail_directory: PathBuf,
+) -> Result<String, String> {
+    let mut client = connect_or_start().await?;
+    client
+        .create_thumbnail(Request::new(ThumbnailRequest {
+            path: path.display().to_string(),
+            thumbnail_directory: thumbnail_directory.display().to_string(),
+        }))
+        .await
+        .map(|response| response.into_inner().thumbnail_path)
         .map_err(|error| error.to_string())
 }
 
