@@ -68,6 +68,7 @@ struct Gui {
     terminal_recommendations: Vec<String>,
     history: Vec<PathBuf>,
     history_index: Option<usize>,
+    sidebar_resize: Option<(f32, u16, u16)>,
 }
 
 const DEFAULT_TERMINAL_CHOICE: &str = "System default";
@@ -153,6 +154,8 @@ enum Message {
     SingleClickFoldersToggled(bool),
     TerminalChoiceSelected(String),
     TerminalCommandChanged(String),
+    StartSidebarResize,
+    FinishSidebarResize,
     ShowEntryContext {
         path: PathBuf,
         is_directory: bool,
@@ -225,6 +228,7 @@ impl Gui {
             terminal_recommendations: recommended_terminal_commands(),
             history: Vec::new(),
             history_index: None,
+            sidebar_resize: None,
         }
     }
 
@@ -357,6 +361,23 @@ impl Gui {
                 self.save_browser_settings(browser);
                 Task::none()
             }
+            Message::StartSidebarResize => {
+                self.sidebar_resize = Some((
+                    self.pointer_position.x,
+                    self.sidebar_width(),
+                    self.sidebar_width(),
+                ));
+                Task::none()
+            }
+            Message::FinishSidebarResize => {
+                let Some((_, _, sidebar_width)) = self.sidebar_resize.take() else {
+                    return Task::none();
+                };
+                let mut browser = self.active_browser_settings();
+                browser.sidebar_width = sidebar_width;
+                self.save_browser_settings(browser);
+                Task::none()
+            }
             Message::ShowEntryContext { path, is_directory } => {
                 self.context_entry = Some(ContextEntry {
                     path: path.clone(),
@@ -386,6 +407,12 @@ impl Gui {
             }
             Message::ContextPointerMoved(position) => {
                 self.pointer_position = position;
+                if let Some((start_x, initial_width, _)) = self.sidebar_resize {
+                    let sidebar_width = (f32::from(initial_width) + position.x - start_x)
+                        .round()
+                        .clamp(140.0, 600.0) as u16;
+                    self.sidebar_resize = Some((start_x, initial_width, sidebar_width));
+                }
                 Task::none()
             }
             Message::CloseFolderContext => {
@@ -498,6 +525,12 @@ impl Gui {
             .and_then(|path| self.profiles.iter().find(|profile| profile.path == path))
             .map(|profile| profile.browser.clone())
             .unwrap_or_else(iron_file_common::config::default_browser_settings)
+    }
+
+    fn sidebar_width(&self) -> u16 {
+        self.sidebar_resize
+            .map(|(_, _, width)| width)
+            .unwrap_or_else(|| self.active_browser_settings().sidebar_width)
     }
 
     fn terminal_choices(&self) -> Vec<String> {
@@ -983,7 +1016,22 @@ impl Gui {
             path: self.directory_path.clone(),
             is_directory: true,
         });
-        let main_content = row![self.sidebar_view(), browser]
+        let resize_handle = mouse_area(
+            container(Space::new(Length::Fixed(6.0), Length::Fill))
+                .width(Length::Fixed(6.0))
+                .height(Length::Fill)
+                .style(|_| {
+                    iced::widget::container::Style::default()
+                        .background(Color::from_rgba8(128, 128, 128, 0.25))
+                }),
+        )
+        .on_press(Message::StartSidebarResize)
+        .on_release(Message::FinishSidebarResize)
+        .interaction(mouse::Interaction::ResizingHorizontally);
+        let sidebar_panel = row![self.sidebar_view(), resize_handle]
+            .spacing(0)
+            .height(Length::Fill);
+        let main_content = row![sidebar_panel, browser]
             .spacing(16)
             .width(Length::Fill)
             .height(Length::Fill);
@@ -1051,7 +1099,8 @@ impl Gui {
             stack![
                 mouse_area(Space::new(Length::Fill, Length::Fill))
                     .on_press(Message::CancelAddressEdit)
-                    .on_move(Message::ContextPointerMoved),
+                    .on_move(Message::ContextPointerMoved)
+                    .on_release(Message::FinishSidebarResize),
                 page,
             ]
             .width(Length::Fill)
@@ -1060,6 +1109,7 @@ impl Gui {
         } else {
             mouse_area(page)
                 .on_move(Message::ContextPointerMoved)
+                .on_release(Message::FinishSidebarResize)
                 .into()
         };
 
@@ -1208,7 +1258,7 @@ impl Gui {
         let mounts = column![text("Mounts").size(16), mounted, unmounted].spacing(6);
         let sidebar_content = column![locations, mounts].spacing(20);
         container(scrollable(sidebar_content))
-            .width(Length::Fixed(180.0))
+            .width(Length::Fixed(f32::from(self.sidebar_width())))
             .height(Length::Fill)
             .into()
     }

@@ -68,6 +68,8 @@ pub struct BrowserSettings {
     pub single_click_opens_folders: bool,
     #[serde(default = "default_terminal_command")]
     pub terminal_command: String,
+    #[serde(default = "default_sidebar_width")]
+    pub sidebar_width: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -435,6 +437,10 @@ fn default_terminal_command() -> String {
     default_browser_settings().terminal_command
 }
 
+fn default_sidebar_width() -> u16 {
+    default_browser_settings().sidebar_width
+}
+
 fn default_profile_file() -> ProfileFile {
     toml::from_str(DEFAULT_PROFILE_TOML).expect("default profile must be valid TOML")
 }
@@ -573,14 +579,17 @@ mod tests {
         let mut browser = profile.browser.clone();
         browser.single_click_opens_folders = true;
         browser.terminal_command = "foot".into();
+        browser.sidebar_width = 240;
 
         let saved = store.save_browser_settings(&profile, browser).unwrap();
 
         assert!(saved.browser.single_click_opens_folders);
         assert_eq!(saved.browser.terminal_command, "foot");
+        assert_eq!(saved.browser.sidebar_width, 240);
         let saved_toml = fs::read_to_string(&profile.path).unwrap();
         assert!(saved_toml.contains("single_click_opens_folders = true"));
         assert!(saved_toml.contains("terminal_command = \"foot\""));
+        assert!(saved_toml.contains("sidebar_width = 240"));
         fs::remove_dir_all(directory).unwrap();
     }
 
