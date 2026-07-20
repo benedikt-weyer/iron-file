@@ -64,6 +64,8 @@ pub struct BrowserSettings {
     pub layout: BrowserLayout,
     #[serde(default = "default_preview_enabled")]
     pub preview_enabled: bool,
+    #[serde(default = "default_show_hidden_files")]
+    pub show_hidden_files: bool,
     #[serde(default = "default_single_click_opens_folders")]
     pub single_click_opens_folders: bool,
     #[serde(default = "default_terminal_command")]
@@ -463,6 +465,10 @@ fn default_single_click_opens_folders() -> bool {
 
 fn default_preview_enabled() -> bool {
     default_browser_settings().preview_enabled
+}
+
+fn default_show_hidden_files() -> bool {
+    default_browser_settings().show_hidden_files
 }
 
 fn default_terminal_command() -> String {

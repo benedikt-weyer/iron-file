@@ -260,6 +260,7 @@ enum Message {
     BrowserLayoutSelected(BrowserLayout),
     BrowserItemSizeChanged(u16),
     PreviewToggled(bool),
+    ToggleHiddenFiles,
     SingleClickFoldersToggled(bool),
     TerminalChoiceSelected(String),
     TerminalCommandChanged(String),
@@ -720,6 +721,12 @@ impl Gui {
             Message::PreviewToggled(preview_enabled) => {
                 let mut browser = self.active_browser_settings();
                 browser.preview_enabled = preview_enabled;
+                self.save_browser_settings(browser);
+                Task::none()
+            }
+            Message::ToggleHiddenFiles => {
+                let mut browser = self.active_browser_settings();
+                browser.show_hidden_files = !browser.show_hidden_files;
                 self.save_browser_settings(browser);
                 Task::none()
             }
@@ -1315,7 +1322,12 @@ impl Gui {
         let columns = self.tile_columns.get().max(1);
 
         self.selected_entries = selection.initial_selection;
-        for (index, entry) in self.entries.iter().enumerate() {
+        for (index, entry) in self
+            .entries
+            .iter()
+            .filter(|entry| browser.show_hidden_files || !entry.name.starts_with('.'))
+            .enumerate()
+        {
             let (x, y, width, height) = if browser.layout == BrowserLayout::Tiles {
                 let column = index % columns;
                 let row = index / columns;
@@ -1738,7 +1750,12 @@ impl Gui {
 
     fn browser_view(&self) -> Element<'_, Message> {
         let browser_settings = self.active_browser_settings();
-        let entries = self.entries.iter().fold(column![], |column, entry| {
+        let visible_entries = self
+            .entries
+            .iter()
+            .filter(|entry| browser_settings.show_hidden_files || !entry.name.starts_with('.'))
+            .collect::<Vec<_>>();
+        let entries = visible_entries.iter().fold(column![], |column, entry| {
             let icon = self.entry_icon(entry, browser_settings.item_size);
             let path = PathBuf::from(&entry.path);
             let is_selected = self.selected_entries.contains(&path);
@@ -1789,7 +1806,7 @@ impl Gui {
                 let columns = (size.width / tile_width).floor().max(1.0) as usize;
                 tile_columns.set(columns);
                 let tiles =
-                    self.entries
+                    visible_entries
                         .chunks(columns)
                         .fold(column![].spacing(8), |column, chunk| {
                             let tiles = chunk.iter().fold(row![].spacing(8), |row, entry| {
@@ -1877,6 +1894,27 @@ impl Gui {
                 tooltip::Position::Bottom,
             ));
         }
+        address_bar = address_bar.push(tooltip(
+            button(icon_text(if browser_settings.show_hidden_files {
+                "eye-off"
+            } else {
+                "eye"
+            }))
+            .style(move |theme, status| {
+                if browser_settings.show_hidden_files {
+                    button::primary(theme, status)
+                } else {
+                    button::text(theme, status)
+                }
+            })
+            .on_press(Message::ToggleHiddenFiles),
+            text(if browser_settings.show_hidden_files {
+                "Hide hidden files"
+            } else {
+                "Show hidden files"
+            }),
+            tooltip::Position::Bottom,
+        ));
         address_bar = address_bar.push(tooltip(
             button(icon_text("settings")).on_press(Message::ShowPreferences),
             text(String::from("Preferences")),

@@ -10,6 +10,7 @@ dark_highlight = "#2b313b"
 item_size = 32
 layout = "list"
 preview_enabled = false
+show_hidden_files = false
 single_click_opens_folders = false
 terminal_command = "default"
 sidebar_width = 180
