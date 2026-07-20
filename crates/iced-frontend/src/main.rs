@@ -1930,6 +1930,10 @@ impl Gui {
             tooltip::Position::Bottom,
         ));
         let tiles_layout = browser_settings.layout == BrowserLayout::Tiles;
+        let entry_count_status = self
+            .status
+            .ends_with(" entries")
+            .then(|| self.status.clone());
         let browser: Element<'_, Message> = if browser_settings.preview_enabled {
             let file_pane: Element<'_, Message> = if tiles_layout {
                 container(entries)
@@ -1995,6 +1999,33 @@ impl Gui {
             .on_press(Message::StartRectangleSelection)
             .on_move(Message::RectanglePointerMoved)
             .on_release(Message::FinishRectangleSelection);
+        let entry_count_overlay: Option<Element<'_, Message>> =
+            entry_count_status.as_ref().map(|status| {
+                container(
+                    container(text(status.clone()))
+                        .padding([4, 8])
+                        .style(|theme: &Theme| {
+                            iced::widget::container::Style::default()
+                                .background(Color::from_rgba8(128, 128, 128, 0.22))
+                                .border(Border {
+                                    color: theme.palette().primary.scale_alpha(0.45),
+                                    width: 1.0,
+                                    radius: 4.0.into(),
+                                })
+                        }),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(8)
+                .align_x(iced::alignment::Horizontal::Right)
+                .align_y(iced::alignment::Vertical::Bottom)
+                .into()
+            });
+        let browser: Element<'_, Message> = stack![browser]
+            .push_maybe(entry_count_overlay)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
         let resize_handle = mouse_area(
             container(Space::new(Length::Fixed(6.0), Length::Fill))
                 .width(Length::Fixed(6.0))
@@ -2018,7 +2049,12 @@ impl Gui {
             .spacing(16)
             .width(Length::Fill)
             .height(Length::Fill);
-        let content = column![address_bar, text(&self.status), main_content];
+        let status: Element<'_, Message> = if entry_count_status.is_some() {
+            Space::with_height(Length::Fixed(0.0)).into()
+        } else {
+            text(&self.status).into()
+        };
+        let content = column![address_bar, status, main_content];
 
         let page = container(content.spacing(12).padding(16).height(Length::Fill))
             .width(Length::Fill)
