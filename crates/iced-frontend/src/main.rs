@@ -19,8 +19,8 @@ use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{
     browse_with_thumbnails,
     config::{BrowserLayout, BrowserSettings, ColorMode, ConfigStore, Profile, SidebarLocation},
-    copy_entries, create_thumbnail, delete_entries, ensure_backend, pipe_backend_logs, proto,
-    restart_backend, stream_directory,
+    copy_entries, create_symlinks, create_thumbnail, delete_entries, ensure_backend,
+    pipe_backend_logs, proto, restart_backend, stream_directory,
 };
 use proto::{BrowseResponse, browse_response::Payload};
 use serde::Deserialize;
@@ -84,7 +84,7 @@ struct Gui {
     entry_icons: HashMap<PathBuf, Option<PathBuf>>,
     thumbnail_handles: HashMap<PathBuf, image::Handle>,
     selected_entries: HashSet<PathBuf>,
-    clipboard_entries: Vec<PathBuf>,
+    paste_buffer: Option<PasteBuffer>,
     pending_delete: Option<Vec<PathBuf>>,
     selection_anchor: Option<PathBuf>,
     modifiers: keyboard::Modifiers,
@@ -156,11 +156,25 @@ enum HistoryRequest {
     Existing(usize),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum BrowserCommand {
     CopySelection,
     Paste,
     DeleteSelection,
+    AddSymlinkToPasteBuffer(PathBuf),
+    CreateSymlinksHere(PathBuf),
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PasteMode {
+    Copy,
+    Symlink,
+}
+
+#[derive(Debug, Clone)]
+struct PasteBuffer {
+    entries: Vec<PathBuf>,
+    mode: PasteMode,
 }
 
 #[derive(Debug, Clone)]
@@ -326,7 +340,7 @@ impl Gui {
             entry_icons: HashMap::new(),
             thumbnail_handles: HashMap::new(),
             selected_entries: HashSet::new(),
-            clipboard_entries: Vec::new(),
+            paste_buffer: None,
             pending_delete: None,
             selection_anchor: None,
             modifiers: keyboard::Modifiers::default(),
@@ -944,26 +958,36 @@ impl Gui {
                 if entries.is_empty() {
                     self.status = "Select files or folders to copy".into();
                 } else {
-                    self.clipboard_entries = entries;
+                    self.paste_buffer = Some(PasteBuffer {
+                        entries,
+                        mode: PasteMode::Copy,
+                    });
                     self.context_entry = None;
-                    self.status = format!(
-                        "Copied {} item(s) to the clipboard",
-                        self.clipboard_entries.len()
-                    );
+                    let count = self
+                        .paste_buffer
+                        .as_ref()
+                        .map_or(0, |buffer| buffer.entries.len());
+                    self.status = format!("Copied {count} item(s) to the clipboard");
                 }
                 Task::none()
             }
             BrowserCommand::Paste => {
-                if self.clipboard_entries.is_empty() {
+                let Some(buffer) = self.paste_buffer.clone() else {
                     self.status = "Nothing to paste".into();
                     return Task::none();
-                }
+                };
                 self.context_entry = None;
-                self.status = format!("Copying {} item(s)...", self.clipboard_entries.len());
-                Task::perform(
-                    copy_entries(self.clipboard_entries.clone(), self.directory_path.clone()),
-                    Message::FileCopyFinished,
-                )
+                self.status = format!("Pasting {} item(s)...", buffer.entries.len());
+                match buffer.mode {
+                    PasteMode::Copy => Task::perform(
+                        copy_entries(buffer.entries, self.directory_path.clone()),
+                        Message::FileCopyFinished,
+                    ),
+                    PasteMode::Symlink => Task::perform(
+                        create_symlinks(buffer.entries, self.directory_path.clone()),
+                        Message::FileCopyFinished,
+                    ),
+                }
             }
             BrowserCommand::DeleteSelection => {
                 let mut paths = self.selected_entries.iter().cloned().collect::<Vec<_>>();
@@ -975,6 +999,23 @@ impl Gui {
                     self.pending_delete = Some(paths);
                 }
                 Task::none()
+            }
+            BrowserCommand::AddSymlinkToPasteBuffer(path) => {
+                self.paste_buffer = Some(PasteBuffer {
+                    entries: vec![path],
+                    mode: PasteMode::Symlink,
+                });
+                self.context_entry = None;
+                self.status = "Added symbolic link to the paste buffer".into();
+                Task::none()
+            }
+            BrowserCommand::CreateSymlinksHere(source) => {
+                self.context_entry = None;
+                self.status = "Creating symbolic link...".into();
+                Task::perform(
+                    create_symlinks(vec![source], self.directory_path.clone()),
+                    Message::FileCopyFinished,
+                )
             }
         }
     }
@@ -1607,7 +1648,7 @@ impl Gui {
                         )),
                 );
             }
-            if !self.clipboard_entries.is_empty() {
+            if self.paste_buffer.is_some() {
                 actions = actions.push(
                     button(text("Paste"))
                         .width(Length::Fill)
@@ -1615,6 +1656,20 @@ impl Gui {
                 );
             }
             if entry.is_directory {
+                actions = actions.push(
+                    button(text("Create symlink here"))
+                        .width(Length::Fill)
+                        .on_press(Message::ExecuteBrowserCommand(
+                            BrowserCommand::CreateSymlinksHere(entry.path.clone()),
+                        )),
+                );
+                actions = actions.push(
+                    button(text("Add symlink to paste buffer"))
+                        .width(Length::Fill)
+                        .on_press(Message::ExecuteBrowserCommand(
+                            BrowserCommand::AddSymlinkToPasteBuffer(entry.path.clone()),
+                        )),
+                );
                 actions = actions.push(
                     button(text("Open terminal here"))
                         .width(Length::Fill)
@@ -1700,30 +1755,67 @@ impl Gui {
 
     fn entry_icon<'a>(&self, entry: &proto::FileEntry, size: u16) -> Element<'a, Message> {
         let opacity = entry.name.starts_with('.').then_some(0.55).unwrap_or(1.0);
-        if let Some(handle) = self.thumbnail_handles.get(&PathBuf::from(&entry.path)) {
-            image(handle.clone())
-                .width(Length::Fixed(f32::from(size)))
-                .height(Length::Fixed(f32::from(size)))
-                .opacity(opacity)
-                .into()
-        } else if let Some(path) = self
-            .entry_icons
-            .get(&PathBuf::from(&entry.path))
-            .and_then(|path| path.as_ref())
-        {
-            svg(svg::Handle::from_path(path))
-                .width(Length::Fixed(f32::from(size)))
-                .height(Length::Fixed(f32::from(size)))
-                .opacity(opacity)
-                .into()
-        } else {
-            let icon = icon_text(if entry.is_directory { "folder" } else { "file" }).size(size);
-            if entry.name.starts_with('.') {
-                icon.color(Color::from_rgba8(128, 128, 128, opacity)).into()
+        let icon: Element<'a, Message> =
+            if let Some(handle) = self.thumbnail_handles.get(&PathBuf::from(&entry.path)) {
+                image(handle.clone())
+                    .width(Length::Fixed(f32::from(size)))
+                    .height(Length::Fixed(f32::from(size)))
+                    .opacity(opacity)
+                    .into()
+            } else if let Some(path) = self
+                .entry_icons
+                .get(&PathBuf::from(&entry.path))
+                .and_then(|path| path.as_ref())
+            {
+                svg(svg::Handle::from_path(path))
+                    .width(Length::Fixed(f32::from(size)))
+                    .height(Length::Fixed(f32::from(size)))
+                    .opacity(opacity)
+                    .into()
             } else {
-                icon.into()
-            }
+                let icon = icon_text(if entry.is_directory { "folder" } else { "file" }).size(size);
+                if entry.name.starts_with('.') {
+                    icon.color(Color::from_rgba8(128, 128, 128, opacity)).into()
+                } else {
+                    icon.into()
+                }
+            };
+        if !entry.is_symlink {
+            return icon;
         }
+
+        let badge_edge = (f32::from(size) * 0.24).clamp(10.0, 18.0);
+        let badge = container(
+            icon_text("link")
+                .size((badge_edge - 4.0).max(7.0) as u16)
+                .color(Color::from_rgb8(35, 35, 35)),
+        )
+        .width(Length::Fixed(badge_edge))
+        .height(Length::Fixed(badge_edge))
+        .align_x(iced::alignment::Horizontal::Center)
+        .align_y(iced::alignment::Vertical::Center)
+        .style(|_| {
+            iced::widget::container::Style::default()
+                .background(Color::from_rgba8(235, 235, 235, 0.92))
+                .border(Border {
+                    color: Color::from_rgba8(70, 70, 70, 0.7),
+                    width: 1.0,
+                    radius: 3.0.into(),
+                })
+        });
+        stack![
+            container(icon)
+                .width(Length::Fixed(f32::from(size)))
+                .height(Length::Fixed(f32::from(size))),
+            container(badge)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Right)
+                .align_y(iced::alignment::Vertical::Bottom),
+        ]
+        .width(Length::Fixed(f32::from(size)))
+        .height(Length::Fixed(f32::from(size)))
+        .into()
     }
 
     fn address_control(&self) -> Element<'_, Message> {

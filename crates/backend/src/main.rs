@@ -160,6 +160,34 @@ impl FileBrowser for FileBrowserService {
         }))
     }
 
+    async fn create_symlinks(
+        &self,
+        request: Request<FileCommandRequest>,
+    ) -> Result<Response<FileCommandResponse>, Status> {
+        let request = request.into_inner();
+        let destination = PathBuf::from(request.destination);
+        let sources = request
+            .sources
+            .into_iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+        self.log(format!(
+            "Creating {} symbolic link(s) in {}",
+            sources.len(),
+            destination.display()
+        ));
+        let paths = create_symlinks(&sources, &destination).map_err(|error| {
+            self.log(format!("Creating symbolic links failed: {error}"));
+            Status::internal(error)
+        })?;
+        Ok(Response::new(FileCommandResponse {
+            copied_paths: paths
+                .into_iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+        }))
+    }
+
     async fn stream_logs(
         &self,
         _: Request<LogStreamRequest>,
@@ -275,11 +303,15 @@ fn directory_entries(path: &Path) -> Result<Vec<FileEntry>, String> {
         .filter_map(Result::ok)
         .map(|entry| {
             let path = entry.path();
+            let is_symlink = std::fs::symlink_metadata(&path)
+                .map(|metadata| metadata.file_type().is_symlink())
+                .unwrap_or(false);
             FileEntry {
                 name: entry.file_name().to_string_lossy().into_owned(),
                 is_directory: path.is_dir(),
                 path: path.display().to_string(),
                 thumbnail_path: String::new(),
+                is_symlink,
             }
         })
         .collect::<Vec<_>>();
@@ -339,6 +371,26 @@ fn delete_entries(paths: &[PathBuf]) -> Result<(), String> {
     Ok(())
 }
 
+fn create_symlinks(sources: &[PathBuf], destination: &Path) -> Result<Vec<PathBuf>, String> {
+    if !destination.is_dir() {
+        return Err(format!("{} is not a directory", destination.display()));
+    }
+    sources
+        .iter()
+        .map(|source| {
+            if !source.exists() {
+                return Err(format!("{} does not exist", source.display()));
+            }
+            let name = source
+                .file_name()
+                .ok_or_else(|| format!("{} has no file name", source.display()))?;
+            let target = available_copy_path(destination.join(name));
+            create_symlink(source, &target)?;
+            Ok(target)
+        })
+        .collect()
+}
+
 fn available_copy_path(candidate: PathBuf) -> PathBuf {
     if !candidate.exists() {
         return candidate;
@@ -394,10 +446,28 @@ fn copy_symlink(source: &Path, target: &Path) -> Result<(), String> {
         .map_err(|error| format!("could not copy symbolic link {}: {error}", source.display()))
 }
 
+#[cfg(unix)]
+fn create_symlink(source: &Path, target: &Path) -> Result<(), String> {
+    std::os::unix::fs::symlink(source, target).map_err(|error| {
+        format!(
+            "could not create symbolic link {}: {error}",
+            target.display()
+        )
+    })
+}
+
 #[cfg(not(unix))]
 fn copy_symlink(source: &Path, _: &Path) -> Result<(), String> {
     Err(format!(
         "copying symbolic links is not supported on this platform: {}",
+        source.display()
+    ))
+}
+
+#[cfg(not(unix))]
+fn create_symlink(source: &Path, _: &Path) -> Result<(), String> {
+    Err(format!(
+        "creating symbolic links is not supported on this platform: {}",
         source.display()
     ))
 }
@@ -488,24 +558,28 @@ mod tests {
                 is_directory: false,
                 path: String::new(),
                 thumbnail_path: String::new(),
+                is_symlink: false,
             },
             FileEntry {
                 name: "visible-file".into(),
                 is_directory: false,
                 path: String::new(),
                 thumbnail_path: String::new(),
+                is_symlink: false,
             },
             FileEntry {
                 name: ".hidden-folder".into(),
                 is_directory: true,
                 path: String::new(),
                 thumbnail_path: String::new(),
+                is_symlink: false,
             },
             FileEntry {
                 name: "visible-folder".into(),
                 is_directory: true,
                 path: String::new(),
                 thumbnail_path: String::new(),
+                is_symlink: false,
             },
         ];
 
@@ -585,6 +659,29 @@ mod tests {
 
         assert!(!file.exists());
         assert!(!directory.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_symlinks_creates_links_to_the_source_entries() {
+        let root = std::env::temp_dir().join(format!(
+            "iron-file-symlink-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        let source = root.join("source.txt");
+        let destination = root.join("destination");
+        std::fs::create_dir_all(&destination).unwrap();
+        std::fs::write(&source, "source").unwrap();
+
+        let created = create_symlinks(std::slice::from_ref(&source), &destination).unwrap();
+
+        assert_eq!(created, vec![destination.join("source.txt")]);
+        assert_eq!(std::fs::read_to_string(&created[0]).unwrap(), "source");
         std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -154,6 +154,31 @@ pub async fn delete_entries(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, String>
         .map_err(|error| error.to_string())
 }
 
+pub async fn create_symlinks(
+    sources: Vec<PathBuf>,
+    destination: PathBuf,
+) -> Result<Vec<PathBuf>, String> {
+    let mut client = connect_or_start().await?;
+    client
+        .create_symlinks(Request::new(FileCommandRequest {
+            sources: sources
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+            destination: destination.display().to_string(),
+        }))
+        .await
+        .map(|response| {
+            response
+                .into_inner()
+                .copied_paths
+                .into_iter()
+                .map(PathBuf::from)
+                .collect()
+        })
+        .map_err(|error| error.to_string())
+}
+
 pub fn stream_directory(
     path: PathBuf,
 ) -> impl tokio_stream::Stream<Item = Result<proto::FileEntry, String>> {

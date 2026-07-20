@@ -8,6 +8,7 @@ service FileBrowser {
   rpc CreateThumbnail(ThumbnailRequest) returns (ThumbnailResponse);
   rpc CopyEntries(FileCommandRequest) returns (FileCommandResponse);
   rpc DeleteEntries(DeleteEntriesRequest) returns (FileCommandResponse);
+  rpc CreateSymlinks(FileCommandRequest) returns (FileCommandResponse);
   rpc StreamLogs(LogStreamRequest) returns (stream LogEntry);
 }
 
@@ -27,6 +28,7 @@ message FileEntry {
   string name = 2;
   bool is_directory = 3;
   string thumbnail_path = 4;
+  bool is_symlink = 5;
 }
 
 message ThumbnailRequest {
