@@ -9,7 +9,9 @@ use std::{
 };
 
 use iced::{
-    Border, Color, Element, Font, Length, Point, Subscription, Task, Theme, keyboard, mouse,
+    Background, Border, Color, Element, Font, Gradient, Length, Point, Subscription, Task, Theme,
+    gradient::Linear,
+    keyboard, mouse,
     widget::{
         Space, button, column, container, image, mouse_area, pick_list, radio, responsive, row,
         scrollable, slider, stack, svg, text, text_input, toggler, tooltip,
@@ -69,6 +71,9 @@ struct Gui {
     active_profile: Option<PathBuf>,
     new_profile_name: String,
     color_mode: ColorMode,
+    light_accent_input: String,
+    dark_accent_input: String,
+    accent_picker: Option<AccentPickerState>,
     context_entry: Option<ContextEntry>,
     pointer_position: Point,
     context_position: Point,
@@ -175,6 +180,14 @@ enum PasteMode {
     Symlink,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct AccentPickerState {
+    dark: bool,
+    hue: u16,
+    saturation: u8,
+    value: u8,
+}
+
 #[derive(Debug, Clone)]
 struct PasteBuffer {
     entries: Vec<PathBuf>,
@@ -223,6 +236,12 @@ enum Message {
     ConfirmProfileReset,
     CancelProfileReset,
     ColorModeSelected(ColorMode),
+    OpenAccentPicker(bool),
+    AccentHueChanged(u16),
+    AccentSaturationChanged(u8),
+    AccentValueChanged(u8),
+    ConfirmAccentPicker,
+    CancelAccentPicker,
     BrowserLayoutSelected(BrowserLayout),
     BrowserItemSizeChanged(u16),
     PreviewToggled(bool),
@@ -341,6 +360,11 @@ impl Gui {
             .and_then(|path| profiles.iter().find(|profile| profile.path == path))
             .map(|profile| profile.color_mode)
             .unwrap_or_default();
+        let theme = active_profile
+            .as_deref()
+            .and_then(|path| profiles.iter().find(|profile| profile.path == path))
+            .map(|profile| profile.theme.clone())
+            .unwrap_or_else(iron_file_common::config::default_theme_settings);
         Self {
             address: directory_path.display().to_string(),
             directory_path,
@@ -356,6 +380,9 @@ impl Gui {
             active_profile,
             new_profile_name: String::new(),
             color_mode,
+            light_accent_input: theme.light_highlight,
+            dark_accent_input: theme.dark_highlight,
+            accent_picker: None,
             context_entry: None,
             pointer_position: Point::ORIGIN,
             context_position: Point::ORIGIN,
@@ -603,6 +630,60 @@ impl Gui {
             }
             Message::ColorModeSelected(color_mode) => {
                 self.save_color_mode(color_mode);
+                Task::none()
+            }
+            Message::OpenAccentPicker(dark) => {
+                let color = parse_color(if dark {
+                    &self.dark_accent_input
+                } else {
+                    &self.light_accent_input
+                })
+                .unwrap_or(Color::BLACK);
+                let (hue, saturation, value) = rgb_to_hsv(color);
+                self.accent_picker = Some(AccentPickerState {
+                    dark,
+                    hue,
+                    saturation,
+                    value,
+                });
+                Task::none()
+            }
+            Message::AccentHueChanged(hue) => {
+                if let Some(picker) = &mut self.accent_picker {
+                    picker.hue = hue;
+                }
+                Task::none()
+            }
+            Message::AccentSaturationChanged(saturation) => {
+                if let Some(picker) = &mut self.accent_picker {
+                    picker.saturation = saturation;
+                }
+                Task::none()
+            }
+            Message::AccentValueChanged(value) => {
+                if let Some(picker) = &mut self.accent_picker {
+                    picker.value = value;
+                }
+                Task::none()
+            }
+            Message::ConfirmAccentPicker => {
+                let Some(picker) = self.accent_picker.take() else {
+                    return Task::none();
+                };
+                let color = hsv_color(picker.hue, picker.saturation, picker.value);
+                self.save_accent_color(
+                    picker.dark,
+                    format!(
+                        "#{:02x}{:02x}{:02x}",
+                        (color.r * 255.0).round() as u8,
+                        (color.g * 255.0).round() as u8,
+                        (color.b * 255.0).round() as u8
+                    ),
+                );
+                Task::none()
+            }
+            Message::CancelAccentPicker => {
+                self.accent_picker = None;
                 Task::none()
             }
             Message::BrowserLayoutSelected(layout) => {
@@ -926,6 +1007,29 @@ impl Gui {
             .unwrap_or_else(iron_file_common::config::default_theme_settings)
     }
 
+    fn accent_picker_button(&self, dark: bool) -> Element<'_, Message> {
+        let color = parse_color(if dark {
+            &self.dark_accent_input
+        } else {
+            &self.light_accent_input
+        })
+        .unwrap_or(Color::BLACK);
+        button(
+            row![
+                container(Space::new(Length::Fixed(20.0), Length::Fixed(20.0)))
+                    .style(move |_| iced::widget::container::Style::default().background(color)),
+                text(if dark {
+                    "Dark accent color"
+                } else {
+                    "Light accent color"
+                }),
+            ]
+            .spacing(8),
+        )
+        .on_press(Message::OpenAccentPicker(dark))
+        .into()
+    }
+
     fn active_browser_settings(&self) -> BrowserSettings {
         self.active_profile
             .as_deref()
@@ -1185,6 +1289,8 @@ impl Gui {
         };
         self.active_profile = Some(path.clone());
         self.color_mode = profile.color_mode;
+        self.light_accent_input = profile.theme.light_highlight.clone();
+        self.dark_accent_input = profile.theme.dark_highlight.clone();
         self.refresh_entry_icons();
         if let Err(error) = self.config_store.set_active_profile(&path) {
             self.status = error;
@@ -1220,6 +1326,36 @@ impl Gui {
         }
     }
 
+    fn save_accent_color(&mut self, dark: bool, value: String) {
+        if dark {
+            self.dark_accent_input = value.clone();
+        } else {
+            self.light_accent_input = value.clone();
+        }
+        if parse_color(&value).is_none() {
+            self.status = "Accent color must be a hex color, for example #4f7cac".into();
+            return;
+        }
+        let Some(path) = self.active_profile.clone() else {
+            self.status = "No active configuration profile".into();
+            return;
+        };
+        let Some(profile) = self.profiles.iter().find(|profile| profile.path == path) else {
+            self.status = "The active configuration profile is unavailable".into();
+            return;
+        };
+        let mut theme = profile.theme.clone();
+        if dark {
+            theme.dark_highlight = value;
+        } else {
+            theme.light_highlight = value;
+        }
+        match self.config_store.save_theme_settings(profile, theme) {
+            Ok(saved_profile) => self.apply_saved_profile(saved_profile),
+            Err(error) => self.status = error,
+        }
+    }
+
     fn save_sidebar_locations(&mut self, sidebar_locations: Vec<SidebarLocation>) {
         let Some(path) = self.active_profile.clone() else {
             self.status = "No active configuration profile".into();
@@ -1241,6 +1377,8 @@ impl Gui {
     fn apply_saved_profile(&mut self, saved_profile: Profile) {
         let saved_path = saved_profile.path.clone();
         let color_mode = saved_profile.color_mode;
+        self.light_accent_input = saved_profile.theme.light_highlight.clone();
+        self.dark_accent_input = saved_profile.theme.dark_highlight.clone();
         if let Some(index) = self
             .profiles
             .iter()
@@ -2390,6 +2528,8 @@ impl Gui {
                     ]
                     .spacing(8),
                     options,
+                    self.accent_picker_button(false),
+                    self.accent_picker_button(true),
                 ]
                 .spacing(10),
                 column![text("Browser").size(18), browser_options].spacing(10),
@@ -2436,8 +2576,130 @@ impl Gui {
             .width(Length::Fill)
             .height(Length::Fill)
         });
+        let accent_picker = self.accent_picker.map(|picker| {
+            let color = hsv_color(picker.hue, picker.saturation, picker.value);
+            let hue_color = |hue| hsv_color(hue, picker.saturation, picker.value);
+            let hue_gradient = Gradient::Linear(
+                Linear::new(std::f32::consts::FRAC_PI_2)
+                    .add_stop(0.0, hue_color(0))
+                    .add_stop(0.17, hue_color(60))
+                    .add_stop(0.33, hue_color(120))
+                    .add_stop(0.5, hue_color(180))
+                    .add_stop(0.67, hue_color(240))
+                    .add_stop(0.83, hue_color(300))
+                    .add_stop(1.0, hue_color(360)),
+            );
+            let hue = stack![
+                container(Space::new(Length::Fill, Length::Fixed(10.0))).style(move |_| {
+                    iced::widget::container::Style::default().background(hue_gradient)
+                }),
+                slider(0..=360, picker.hue, Message::AccentHueChanged)
+                    .width(Length::Fill)
+                    .style(|theme, status| {
+                        let mut style = iced::widget::slider::default(theme, status);
+                        style.rail.backgrounds = (
+                            Background::Color(Color::TRANSPARENT),
+                            Background::Color(Color::TRANSPARENT),
+                        );
+                        style
+                    }),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fixed(24.0));
+            let saturation_gradient = Gradient::Linear(
+                Linear::new(std::f32::consts::FRAC_PI_2)
+                    .add_stop(0.0, hsv_color(picker.hue, 0, picker.value))
+                    .add_stop(1.0, hsv_color(picker.hue, 255, picker.value)),
+            );
+            let saturation = stack![
+                container(Space::new(Length::Fill, Length::Fixed(10.0))).style(move |_| {
+                    iced::widget::container::Style::default().background(saturation_gradient)
+                }),
+                slider(0..=255, picker.saturation, Message::AccentSaturationChanged)
+                    .width(Length::Fill)
+                    .style(|theme, status| {
+                        let mut style = iced::widget::slider::default(theme, status);
+                        style.rail.backgrounds = (
+                            Background::Color(Color::TRANSPARENT),
+                            Background::Color(Color::TRANSPARENT),
+                        );
+                        style
+                    }),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fixed(24.0));
+            let value_gradient = Gradient::Linear(
+                Linear::new(std::f32::consts::FRAC_PI_2)
+                    .add_stop(0.0, Color::BLACK)
+                    .add_stop(1.0, hsv_color(picker.hue, picker.saturation, 255)),
+            );
+            let value = stack![
+                container(Space::new(Length::Fill, Length::Fixed(10.0))).style(move |_| {
+                    iced::widget::container::Style::default().background(value_gradient)
+                }),
+                slider(0..=255, picker.value, Message::AccentValueChanged)
+                    .width(Length::Fill)
+                    .style(|theme, status| {
+                        let mut style = iced::widget::slider::default(theme, status);
+                        style.rail.backgrounds = (
+                            Background::Color(Color::TRANSPARENT),
+                            Background::Color(Color::TRANSPARENT),
+                        );
+                        style
+                    }),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fixed(24.0));
+            let dialog = container(
+                column![
+                    text(if picker.dark {
+                        "Dark accent color"
+                    } else {
+                        "Light accent color"
+                    }),
+                    container(Space::new(Length::Fill, Length::Fixed(42.0))).style(move |_| {
+                        iced::widget::container::Style::default().background(color)
+                    }),
+                    text("Hue"),
+                    hue,
+                    text("Saturation"),
+                    saturation,
+                    text("Value"),
+                    value,
+                    row![
+                        button(text("Cancel")).on_press(Message::CancelAccentPicker),
+                        button(text("Apply")).on_press(Message::ConfirmAccentPicker),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(12),
+            )
+            .width(Length::Fixed(320.0))
+            .padding(16)
+            .style(|theme: &Theme| {
+                iced::widget::container::Style::default()
+                    .background(theme.palette().background)
+                    .border(Border {
+                        color: theme.palette().primary,
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    })
+            });
+            stack![
+                mouse_area(Space::new(Length::Fill, Length::Fill))
+                    .on_press(Message::CancelAccentPicker),
+                container(dialog)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+        });
         stack![page]
             .push_maybe(reset_confirmation)
+            .push_maybe(accent_picker)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -2599,6 +2861,44 @@ fn parse_color(value: &str) -> Option<Color> {
     let green = u8::from_str_radix(&value[2..4], 16).ok()?;
     let blue = u8::from_str_radix(&value[4..6], 16).ok()?;
     Some(Color::from_rgb8(red, green, blue))
+}
+
+fn hsv_color(hue: u16, saturation: u8, value: u8) -> Color {
+    let hue = (hue % 360) as f32 / 60.0;
+    let value = f32::from(value) / 255.0;
+    let chroma = value * f32::from(saturation) / 255.0;
+    let secondary = chroma * (1.0 - ((hue % 2.0) - 1.0).abs());
+    let (red, green, blue) = match hue as u8 {
+        0 => (chroma, secondary, 0.0),
+        1 => (secondary, chroma, 0.0),
+        2 => (0.0, chroma, secondary),
+        3 => (0.0, secondary, chroma),
+        4 => (secondary, 0.0, chroma),
+        _ => (chroma, 0.0, secondary),
+    };
+    let offset = value - chroma;
+    Color::from_rgb(red + offset, green + offset, blue + offset)
+}
+
+fn rgb_to_hsv(color: Color) -> (u16, u8, u8) {
+    let maximum = color.r.max(color.g).max(color.b);
+    let minimum = color.r.min(color.g).min(color.b);
+    let delta = maximum - minimum;
+    let hue = if delta == 0.0 {
+        0.0
+    } else if maximum == color.r {
+        60.0 * ((color.g - color.b) / delta).rem_euclid(6.0)
+    } else if maximum == color.g {
+        60.0 * ((color.b - color.r) / delta + 2.0)
+    } else {
+        60.0 * ((color.r - color.g) / delta + 4.0)
+    };
+    let saturation = if maximum == 0.0 { 0.0 } else { delta / maximum };
+    (
+        hue.round() as u16,
+        (saturation * 255.0).round() as u8,
+        (maximum * 255.0).round() as u8,
+    )
 }
 
 #[derive(Debug, Deserialize)]

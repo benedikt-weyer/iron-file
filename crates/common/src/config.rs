@@ -230,6 +230,31 @@ impl ConfigStore {
         self.read_profile(&profile.path)
     }
 
+    pub fn save_theme_settings(
+        &self,
+        profile: &Profile,
+        theme: ThemeSettings,
+    ) -> Result<Profile, String> {
+        if profile.read_only {
+            let overlay = self.overlay_path(&profile.path);
+            let file = ProfileFile {
+                name: Some(profile.name.clone()),
+                color_mode: None,
+                sidebar_locations: None,
+                theme: Some(theme),
+                browser: None,
+                base_profile: Some(profile.path.clone()),
+            };
+            self.write_profile_file(&overlay, &file)?;
+            return self.read_profile(&overlay);
+        }
+
+        let mut file = self.read_profile_file(&profile.path)?;
+        file.theme = Some(theme);
+        self.write_profile_file(&profile.path, &file)?;
+        self.read_profile(&profile.path)
+    }
+
     pub fn save_sidebar_locations(
         &self,
         profile: &Profile,
@@ -582,6 +607,27 @@ mod tests {
             fs::read_to_string(&profile.path)
                 .unwrap()
                 .contains("color_mode = \"day\"")
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn saves_theme_settings_to_a_profile() {
+        let directory = test_directory();
+        let store = ConfigStore::with_paths(directory.join("user"), vec![]);
+        let profile = store.create_profile("Accent").unwrap();
+        let theme = ThemeSettings {
+            light_highlight: "#112233".into(),
+            dark_highlight: "#445566".into(),
+        };
+
+        let saved = store.save_theme_settings(&profile, theme.clone()).unwrap();
+
+        assert_eq!(saved.theme, theme);
+        assert!(
+            fs::read_to_string(&profile.path)
+                .unwrap()
+                .contains("light_highlight = \"#112233\"")
         );
         fs::remove_dir_all(directory).unwrap();
     }
