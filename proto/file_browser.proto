@@ -7,6 +7,7 @@ service FileBrowser {
   rpc ListDirectory(ListDirectoryRequest) returns (stream FileEntry);
   rpc CreateThumbnail(ThumbnailRequest) returns (ThumbnailResponse);
   rpc CopyEntries(FileCommandRequest) returns (FileCommandResponse);
+  rpc DeleteEntries(DeleteEntriesRequest) returns (FileCommandResponse);
   rpc StreamLogs(LogStreamRequest) returns (stream LogEntry);
 }
 
@@ -45,6 +46,10 @@ message FileCommandRequest {
 
 message FileCommandResponse {
   repeated string copied_paths = 1;
+}
+
+message DeleteEntriesRequest {
+  repeated string paths = 1;
 }
 
 message ListDirectoryRequest {

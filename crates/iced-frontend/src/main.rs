@@ -19,8 +19,8 @@ use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{
     browse_with_thumbnails,
     config::{BrowserLayout, BrowserSettings, ColorMode, ConfigStore, Profile, SidebarLocation},
-    copy_entries, create_thumbnail, ensure_backend, pipe_backend_logs, proto, restart_backend,
-    stream_directory,
+    copy_entries, create_thumbnail, delete_entries, ensure_backend, pipe_backend_logs, proto,
+    restart_backend, stream_directory,
 };
 use proto::{BrowseResponse, browse_response::Payload};
 use serde::Deserialize;
@@ -85,6 +85,7 @@ struct Gui {
     thumbnail_handles: HashMap<PathBuf, image::Handle>,
     selected_entries: HashSet<PathBuf>,
     clipboard_entries: Vec<PathBuf>,
+    pending_delete: Option<Vec<PathBuf>>,
     selection_anchor: Option<PathBuf>,
     modifiers: keyboard::Modifiers,
     browser_pointer: Point,
@@ -159,6 +160,7 @@ enum HistoryRequest {
 enum BrowserCommand {
     CopySelection,
     Paste,
+    DeleteSelection,
 }
 
 #[derive(Debug, Clone)]
@@ -176,6 +178,9 @@ enum Message {
     },
     ExecuteBrowserCommand(BrowserCommand),
     FileCopyFinished(Result<Vec<PathBuf>, String>),
+    ConfirmDelete,
+    CancelDelete,
+    FileDeleteFinished(Result<Vec<PathBuf>, String>),
     ModifiersChanged(keyboard::Modifiers),
     StartRectangleSelection,
     RectanglePointerMoved(Point),
@@ -260,6 +265,13 @@ impl Gui {
                     _ => None,
                 }
             }
+            iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
+                if key == keyboard::Key::Named(keyboard::key::Named::Delete) =>
+            {
+                Some(Message::ExecuteBrowserCommand(
+                    BrowserCommand::DeleteSelection,
+                ))
+            }
             _ => None,
         })
     }
@@ -315,6 +327,7 @@ impl Gui {
             thumbnail_handles: HashMap::new(),
             selected_entries: HashSet::new(),
             clipboard_entries: Vec::new(),
+            pending_delete: None,
             selection_anchor: None,
             modifiers: keyboard::Modifiers::default(),
             browser_pointer: Point::ORIGIN,
@@ -410,6 +423,29 @@ impl Gui {
                 }
                 Err(error) => {
                     self.status = format!("Copy failed: {error}");
+                    Task::none()
+                }
+            },
+            Message::ConfirmDelete => {
+                let Some(paths) = self.pending_delete.take() else {
+                    return Task::none();
+                };
+                self.status = format!("Deleting {} item(s)...", paths.len());
+                Task::perform(delete_entries(paths), Message::FileDeleteFinished)
+            }
+            Message::CancelDelete => {
+                self.pending_delete = None;
+                Task::none()
+            }
+            Message::FileDeleteFinished(result) => match result {
+                Ok(paths) => {
+                    self.status = format!("Deleted {} item(s)", paths.len());
+                    self.selected_entries.clear();
+                    self.selection_anchor = None;
+                    self.open_path(self.directory_path.clone())
+                }
+                Err(error) => {
+                    self.status = format!("Delete failed: {error}");
                     Task::none()
                 }
             },
@@ -898,6 +934,9 @@ impl Gui {
     }
 
     fn execute_browser_command(&mut self, command: BrowserCommand) -> Task<Message> {
+        if self.view != View::Browser || self.editing_address {
+            return Task::none();
+        }
         match command {
             BrowserCommand::CopySelection => {
                 let mut entries = self.selected_entries.iter().cloned().collect::<Vec<_>>();
@@ -925,6 +964,17 @@ impl Gui {
                     copy_entries(self.clipboard_entries.clone(), self.directory_path.clone()),
                     Message::FileCopyFinished,
                 )
+            }
+            BrowserCommand::DeleteSelection => {
+                let mut paths = self.selected_entries.iter().cloned().collect::<Vec<_>>();
+                paths.sort();
+                if paths.is_empty() {
+                    self.status = "Select files or folders to delete".into();
+                } else {
+                    self.context_entry = None;
+                    self.pending_delete = Some(paths);
+                }
+                Task::none()
             }
         }
     }
@@ -1549,6 +1599,13 @@ impl Gui {
                     actions.push(button(text("Copy selection")).width(Length::Fill).on_press(
                         Message::ExecuteBrowserCommand(BrowserCommand::CopySelection),
                     ));
+                actions = actions.push(
+                    button(text("Delete selection"))
+                        .width(Length::Fill)
+                        .on_press(Message::ExecuteBrowserCommand(
+                            BrowserCommand::DeleteSelection,
+                        )),
+                );
             }
             if !self.clipboard_entries.is_empty() {
                 actions = actions.push(
@@ -1598,9 +1655,44 @@ impl Gui {
                 .on_release(Message::FinishSidebarResize)
                 .into()
         };
+        let delete_confirmation = self.pending_delete.as_ref().map(|paths| {
+            let dialog = container(
+                column![
+                    text(format!("Delete {} item(s)?", paths.len())),
+                    text("This permanently deletes the selected files and folders."),
+                    row![
+                        button(text("Cancel")).on_press(Message::CancelDelete),
+                        button(text("Delete")).on_press(Message::ConfirmDelete),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(12),
+            )
+            .padding(16)
+            .style(|theme: &Theme| {
+                iced::widget::container::Style::default()
+                    .background(theme.palette().background)
+                    .border(Border {
+                        color: theme.palette().primary,
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    })
+            });
+            stack![
+                mouse_area(Space::new(Length::Fill, Length::Fill)).on_press(Message::CancelDelete),
+                container(dialog)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+        });
 
         stack![page]
             .push_maybe(overlay)
+            .push_maybe(delete_confirmation)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()

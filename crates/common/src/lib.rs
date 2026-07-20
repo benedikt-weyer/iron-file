@@ -23,8 +23,8 @@ pub mod proto {
 }
 
 use proto::{
-    FileCommandRequest, ListDirectoryRequest, LogStreamRequest, OpenPathRequest, ThumbnailRequest,
-    file_browser_client::FileBrowserClient,
+    DeleteEntriesRequest, FileCommandRequest, ListDirectoryRequest, LogStreamRequest,
+    OpenPathRequest, ThumbnailRequest, file_browser_client::FileBrowserClient,
 };
 
 const BACKEND_MODE_ENV: &str = "IRON_FILE_BACKEND_MODE";
@@ -131,6 +131,27 @@ pub async fn copy_entries(
         }
         Err(error) => Err(error.to_string()),
     }
+}
+
+pub async fn delete_entries(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
+    let mut client = connect_or_start().await?;
+    client
+        .delete_entries(Request::new(DeleteEntriesRequest {
+            paths: paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+        }))
+        .await
+        .map(|response| {
+            response
+                .into_inner()
+                .copied_paths
+                .into_iter()
+                .map(PathBuf::from)
+                .collect()
+        })
+        .map_err(|error| error.to_string())
 }
 
 pub fn stream_directory(

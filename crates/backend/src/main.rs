@@ -20,9 +20,9 @@ use tokio_stream::{
 use tonic::{Request, Response, Status, transport::Server};
 
 use proto::{
-    BrowseResponse, BrowserError, Directory, FileCommandRequest, FileCommandResponse, FileContent,
-    FileEntry, ListDirectoryRequest, LogEntry, LogStreamRequest, OpenPathRequest, ThumbnailRequest,
-    ThumbnailResponse,
+    BrowseResponse, BrowserError, DeleteEntriesRequest, Directory, FileCommandRequest,
+    FileCommandResponse, FileContent, FileEntry, ListDirectoryRequest, LogEntry, LogStreamRequest,
+    OpenPathRequest, ThumbnailRequest, ThumbnailResponse,
     browse_response::Payload,
     file_browser_server::{FileBrowser, FileBrowserServer},
 };
@@ -130,6 +130,30 @@ impl FileBrowser for FileBrowserService {
         ));
         Ok(Response::new(FileCommandResponse {
             copied_paths: copied_paths
+                .into_iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+        }))
+    }
+
+    async fn delete_entries(
+        &self,
+        request: Request<DeleteEntriesRequest>,
+    ) -> Result<Response<FileCommandResponse>, Status> {
+        let paths = request
+            .into_inner()
+            .paths
+            .into_iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+        self.log(format!("Deleting {} item(s)", paths.len()));
+        delete_entries(&paths).map_err(|error| {
+            self.log(format!("Delete failed: {error}"));
+            Status::internal(error)
+        })?;
+        self.log(format!("Deleted {} item(s)", paths.len()));
+        Ok(Response::new(FileCommandResponse {
+            copied_paths: paths
                 .into_iter()
                 .map(|path| path.display().to_string())
                 .collect(),
@@ -299,6 +323,20 @@ fn copy_entries(
             Ok(target)
         })
         .collect()
+}
+
+fn delete_entries(paths: &[PathBuf]) -> Result<(), String> {
+    for path in paths {
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
+        let result = if metadata.is_dir() {
+            std::fs::remove_dir_all(path)
+        } else {
+            std::fs::remove_file(path)
+        };
+        result.map_err(|error| format!("could not delete {}: {error}", path.display()))?;
+    }
+    Ok(())
 }
 
 fn available_copy_path(candidate: PathBuf) -> PathBuf {
@@ -524,6 +562,29 @@ mod tests {
             std::fs::read_to_string(destination.join("note (copy 1).txt")).unwrap(),
             "note"
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn delete_entries_removes_files_and_directories_permanently() {
+        let root = std::env::temp_dir().join(format!(
+            "iron-file-delete-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        let file = root.join("file.txt");
+        let directory = root.join("directory");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(&file, "file").unwrap();
+        std::fs::write(directory.join("nested.txt"), "nested").unwrap();
+
+        delete_entries(&[file.clone(), directory.clone()]).unwrap();
+
+        assert!(!file.exists());
+        assert!(!directory.exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 }
