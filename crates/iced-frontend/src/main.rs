@@ -1707,84 +1707,144 @@ impl Gui {
                     .iter()
                     .any(|location| location.path == entry.path);
                 if is_in_sidebar {
-                    button(text("Remove from sidebar"))
-                        .width(Length::Fill)
-                        .on_press(Message::RemoveContextFolderFromSidebar)
-                        .into()
+                    button(
+                        row![
+                            icon_text("folder-minus").size(16),
+                            text("Remove from sidebar")
+                        ]
+                        .spacing(8),
+                    )
+                    .width(Length::Fill)
+                    .style(context_menu_button_style)
+                    .on_press(Message::RemoveContextFolderFromSidebar)
+                    .into()
                 } else {
-                    button(text("Add to sidebar"))
-                        .width(Length::Fill)
-                        .on_press(Message::AddContextFolderToSidebar)
-                        .into()
+                    button(
+                        row![icon_text("folder-plus").size(16), text("Add to sidebar")].spacing(8),
+                    )
+                    .width(Length::Fill)
+                    .style(context_menu_button_style)
+                    .on_press(Message::AddContextFolderToSidebar)
+                    .into()
                 }
             } else {
                 match &entry.opener {
-                    Some(Ok(application)) => button(text(format!("Open (with {application})")))
-                        .width(Length::Fill)
-                        .on_press(Message::OpenContextFile)
-                        .into(),
-                    Some(Err(_)) => button(text("Open"))
-                        .width(Length::Fill)
-                        .on_press(Message::OpenContextFile)
-                        .into(),
+                    Some(Ok(application)) => button(
+                        row![
+                            icon_text("external-link").size(16),
+                            text(format!("Open (with {application})"))
+                        ]
+                        .spacing(8),
+                    )
+                    .width(Length::Fill)
+                    .style(context_menu_button_style)
+                    .on_press(Message::OpenContextFile)
+                    .into(),
+                    Some(Err(_)) => {
+                        button(row![icon_text("external-link").size(16), text("Open")].spacing(8))
+                            .width(Length::Fill)
+                            .style(context_menu_button_style)
+                            .on_press(Message::OpenContextFile)
+                            .into()
+                    }
                     None => text("Finding default application...").into(),
                 }
             };
             let mut actions = column![action].spacing(4);
             if !self.selected_entries.is_empty() {
-                actions =
-                    actions.push(button(text("Copy selection")).width(Length::Fill).on_press(
-                        Message::ExecuteBrowserCommand(BrowserCommand::CopySelection),
-                    ));
                 actions = actions.push(
-                    button(text("Delete selection"))
+                    button(row![icon_text("copy").size(16), text("Copy selection")].spacing(8))
                         .width(Length::Fill)
+                        .style(context_menu_button_style)
                         .on_press(Message::ExecuteBrowserCommand(
-                            BrowserCommand::DeleteSelection,
+                            BrowserCommand::CopySelection,
                         )),
+                );
+                actions = actions.push(
+                    button(
+                        row![icon_text("trash-2").size(16), text("Delete selection")].spacing(8),
+                    )
+                    .width(Length::Fill)
+                    .style(context_menu_button_style)
+                    .on_press(Message::ExecuteBrowserCommand(
+                        BrowserCommand::DeleteSelection,
+                    )),
                 );
             }
             if self.paste_buffer.is_some() {
                 actions = actions.push(
-                    button(text("Paste"))
+                    button(row![icon_text("clipboard-paste").size(16), text("Paste")].spacing(8))
                         .width(Length::Fill)
+                        .style(context_menu_button_style)
                         .on_press(Message::ExecuteBrowserCommand(BrowserCommand::Paste)),
                 );
             }
             if entry.is_directory {
-                actions = actions.push(button(text("Create folder")).width(Length::Fill).on_press(
-                    Message::RequestCreateEntry {
+                actions = actions.push(
+                    button(
+                        row![icon_text("folder-plus").size(16), text("Create folder")].spacing(8),
+                    )
+                    .width(Length::Fill)
+                    .style(context_menu_button_style)
+                    .on_press(Message::RequestCreateEntry {
                         parent: entry.path.clone(),
                         is_directory: true,
-                    },
-                ));
-                actions = actions.push(button(text("Create file")).width(Length::Fill).on_press(
-                    Message::RequestCreateEntry {
-                        parent: entry.path.clone(),
-                        is_directory: false,
-                    },
-                ));
-                actions = actions.push(
-                    button(text("Create symlink here"))
-                        .width(Length::Fill)
-                        .on_press(Message::ExecuteBrowserCommand(
-                            BrowserCommand::CreateSymlinksHere(entry.path.clone()),
-                        )),
+                    }),
                 );
                 actions = actions.push(
-                    button(text("Add symlink to paste buffer"))
+                    button(row![icon_text("file-plus").size(16), text("Create file")].spacing(8))
                         .width(Length::Fill)
-                        .on_press(Message::ExecuteBrowserCommand(
-                            BrowserCommand::AddSymlinkToPasteBuffer(entry.path.clone()),
-                        )),
+                        .style(context_menu_button_style)
+                        .on_press(Message::RequestCreateEntry {
+                            parent: entry.path.clone(),
+                            is_directory: false,
+                        }),
                 );
                 actions = actions.push(
-                    button(text("Open terminal here"))
-                        .width(Length::Fill)
-                        .on_press(Message::OpenTerminalHere),
+                    button(
+                        row![icon_text("link").size(16), text("Create symlink here")].spacing(8),
+                    )
+                    .width(Length::Fill)
+                    .style(context_menu_button_style)
+                    .on_press(Message::ExecuteBrowserCommand(
+                        BrowserCommand::CreateSymlinksHere(entry.path.clone()),
+                    )),
+                );
+                actions = actions.push(
+                    button(
+                        row![
+                            icon_text("link").size(16),
+                            text("Add symlink to paste buffer")
+                        ]
+                        .spacing(8),
+                    )
+                    .width(Length::Fill)
+                    .style(context_menu_button_style)
+                    .on_press(Message::ExecuteBrowserCommand(
+                        BrowserCommand::AddSymlinkToPasteBuffer(entry.path.clone()),
+                    )),
+                );
+                actions = actions.push(
+                    button(
+                        row![icon_text("terminal").size(16), text("Open terminal here")].spacing(8),
+                    )
+                    .width(Length::Fill)
+                    .style(context_menu_button_style)
+                    .on_press(Message::OpenTerminalHere),
                 );
             }
-            let menu = container(actions).padding(8);
+            let menu = container(actions)
+                .width(Length::Fixed(240.0))
+                .padding(8)
+                .style(|theme: &Theme| {
+                    iced::widget::container::Style::default()
+                        .background(theme.palette().background)
+                        .border(Border {
+                            color: Color::from_rgba8(128, 128, 128, 0.45),
+                            width: 1.0,
+                            radius: 6.0.into(),
+                        })
+                });
             let menu_position = container(column![
                 Space::with_height(self.context_position.y),
                 row![Space::with_width(self.context_position.x), menu],
@@ -2448,6 +2508,21 @@ fn file_item_button_style(theme: &Theme, status: button::Status, selected: bool)
             ..style.with_background(theme.palette().primary)
         }
     } else if matches!(status, button::Status::Hovered) {
+        style.with_background(Color::from_rgba8(128, 128, 128, 0.18))
+    } else {
+        style
+    }
+}
+
+fn context_menu_button_style(theme: &Theme, status: button::Status) -> button::Style {
+    let style = button::Style {
+        border: Border {
+            radius: 4.0.into(),
+            ..button::text(theme, status).border
+        },
+        ..button::text(theme, status)
+    };
+    if matches!(status, button::Status::Hovered) {
         style.with_background(Color::from_rgba8(128, 128, 128, 0.18))
     } else {
         style
