@@ -66,6 +66,8 @@ struct Gui {
     dragging_sidebar_location: Option<PathBuf>,
     last_entry_click: Option<(PathBuf, Instant)>,
     terminal_recommendations: Vec<String>,
+    history: Vec<PathBuf>,
+    history_index: Option<usize>,
 }
 
 const DEFAULT_TERMINAL_CHOICE: &str = "System default";
@@ -117,6 +119,13 @@ enum View {
     Preferences,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum HistoryRequest {
+    Initial,
+    New,
+    Existing(usize),
+}
+
 #[derive(Debug, Clone)]
 enum Message {
     AddressChanged(String),
@@ -124,6 +133,8 @@ enum Message {
     CancelAddressEdit,
     OpenAddress,
     OpenPath(PathBuf),
+    NavigateBack,
+    NavigateForward,
     EntryClicked {
         path: PathBuf,
         is_directory: bool,
@@ -163,7 +174,10 @@ enum Message {
     FileOpened(Result<(), String>),
     TerminalOpened(Result<(), String>),
     BackendLogPipeEnded(Result<(), String>),
-    BrowseFinished(Result<BrowseResponse, String>),
+    BrowseFinished {
+        result: Result<BrowseResponse, String>,
+        history: HistoryRequest,
+    },
     IconFontLoaded(Result<(), iced::font::Error>),
 }
 
@@ -209,6 +223,8 @@ impl Gui {
             dragging_sidebar_location: None,
             last_entry_click: None,
             terminal_recommendations: recommended_terminal_commands(),
+            history: Vec::new(),
+            history_index: None,
         }
     }
 
@@ -218,10 +234,12 @@ impl Gui {
             fonts()
                 .iter()
                 .map(|font| iced::font::load(font.bytes).map(Message::IconFontLoaded))
-                .chain(std::iter::once(Task::perform(
-                    browse(path),
-                    Message::BrowseFinished,
-                )))
+                .chain(std::iter::once(Task::perform(browse(path), |result| {
+                    Message::BrowseFinished {
+                        result,
+                        history: HistoryRequest::Initial,
+                    }
+                })))
                 .chain(std::iter::once(Task::perform(
                     load_mounts(),
                     Message::MountsLoaded,
@@ -250,6 +268,8 @@ impl Gui {
             }
             Message::OpenAddress => self.open_path(PathBuf::from(&self.address)),
             Message::OpenPath(path) => self.open_path(path),
+            Message::NavigateBack => self.navigate_history(-1),
+            Message::NavigateForward => self.navigate_history(1),
             Message::EntryClicked { path, is_directory } => {
                 self.handle_entry_click(path, is_directory)
             }
@@ -436,8 +456,8 @@ impl Gui {
                 Task::none()
             }
             Message::BackendLogPipeEnded(Ok(())) => Task::none(),
-            Message::BrowseFinished(result) => {
-                self.apply_response(result);
+            Message::BrowseFinished { result, history } => {
+                self.apply_response(result, history);
                 Task::none()
             }
             Message::IconFontLoaded(_) => Task::none(),
@@ -706,12 +726,32 @@ impl Gui {
     }
 
     fn open_path(&mut self, path: PathBuf) -> Task<Message> {
-        self.editing_address = false;
-        self.status = format!("Loading {}", path.display());
-        Task::perform(browse(path), Message::BrowseFinished)
+        self.request_path(path, HistoryRequest::New)
     }
 
-    fn apply_response(&mut self, result: Result<BrowseResponse, String>) {
+    fn navigate_history(&mut self, direction: isize) -> Task<Message> {
+        let Some(index) = self.history_index else {
+            return Task::none();
+        };
+        let Some(target_index) = index.checked_add_signed(direction) else {
+            return Task::none();
+        };
+        let Some(path) = self.history.get(target_index).cloned() else {
+            return Task::none();
+        };
+        self.request_path(path, HistoryRequest::Existing(target_index))
+    }
+
+    fn request_path(&mut self, path: PathBuf, history: HistoryRequest) -> Task<Message> {
+        self.editing_address = false;
+        self.status = format!("Loading {}", path.display());
+        Task::perform(browse(path), move |result| Message::BrowseFinished {
+            result,
+            history,
+        })
+    }
+
+    fn apply_response(&mut self, result: Result<BrowseResponse, String>, history: HistoryRequest) {
         let response = match result {
             Ok(response) => response,
             Err(error) => {
@@ -724,6 +764,7 @@ impl Gui {
             Some(Payload::Directory(directory)) => {
                 self.address = response.path.clone();
                 self.directory_path = PathBuf::from(response.path);
+                self.record_history(self.directory_path.clone(), history);
                 self.entries = directory.entries;
                 self.content.clear();
                 self.status = format!("{} entries", self.entries.len());
@@ -735,6 +776,32 @@ impl Gui {
             }
             Some(Payload::Error(error)) => self.status = error.message,
             None => self.status = "Backend returned an invalid response".into(),
+        }
+    }
+
+    fn record_history(&mut self, path: PathBuf, request: HistoryRequest) {
+        match request {
+            HistoryRequest::Initial => {
+                self.history = vec![path];
+                self.history_index = Some(0);
+            }
+            HistoryRequest::New => {
+                let Some(index) = self.history_index else {
+                    self.history = vec![path];
+                    self.history_index = Some(0);
+                    return;
+                };
+                if self.history.get(index) == Some(&path) {
+                    return;
+                }
+                self.history.truncate(index + 1);
+                self.history.push(path);
+                self.history_index = Some(self.history.len() - 1);
+            }
+            HistoryRequest::Existing(index) if self.history.get(index) == Some(&path) => {
+                self.history_index = Some(index);
+            }
+            HistoryRequest::Existing(_) => self.record_history(path, HistoryRequest::New),
         }
     }
 
@@ -849,7 +916,23 @@ impl Gui {
             entries.into()
         };
 
+        let can_go_back = self.history_index.is_some_and(|index| index > 0);
+        let can_go_forward = self
+            .history_index
+            .is_some_and(|index| index + 1 < self.history.len());
         let mut address_bar = row![
+            tooltip(
+                button(icon_text("arrow-left"))
+                    .on_press_maybe(can_go_back.then_some(Message::NavigateBack)),
+                text("Back"),
+                tooltip::Position::Bottom,
+            ),
+            tooltip(
+                button(icon_text("arrow-right"))
+                    .on_press_maybe(can_go_forward.then_some(Message::NavigateForward)),
+                text("Forward"),
+                tooltip::Position::Bottom,
+            ),
             tooltip(
                 button(icon_text("folder-up")).on_press(Message::OpenParent),
                 text("Parent folder"),
