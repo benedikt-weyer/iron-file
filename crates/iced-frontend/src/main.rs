@@ -17,7 +17,7 @@ use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{
     browse_with_thumbnails,
     config::{BrowserLayout, BrowserSettings, ColorMode, ConfigStore, Profile, SidebarLocation},
-    create_thumbnail, ensure_backend, pipe_backend_logs, proto, stream_directory,
+    create_thumbnail, ensure_backend, pipe_backend_logs, proto, restart_backend, stream_directory,
 };
 use proto::{BrowseResponse, browse_response::Payload};
 use serde::Deserialize;
@@ -194,6 +194,8 @@ enum Message {
     FileOpened(Result<(), String>),
     TerminalOpened(Result<(), String>),
     BackendLogPipeEnded(Result<(), String>),
+    RestartBackend,
+    BackendRestarted(Result<(), String>),
     ThumbnailGenerated {
         path: PathBuf,
         thumbnail_path: Result<String, String>,
@@ -553,6 +555,17 @@ impl Gui {
                 Task::none()
             }
             Message::BackendLogPipeEnded(Ok(())) => Task::none(),
+            Message::RestartBackend => {
+                self.status = "Restarting backend".into();
+                Task::perform(restart_backend(), Message::BackendRestarted)
+            }
+            Message::BackendRestarted(result) => {
+                self.status = match result {
+                    Ok(()) => "Backend restarted".into(),
+                    Err(error) => format!("Could not restart backend: {error}"),
+                };
+                Task::none()
+            }
             Message::ThumbnailGenerated {
                 path,
                 thumbnail_path: Ok(thumbnail_path),
@@ -1610,6 +1623,7 @@ impl Gui {
             )
             .on_input(Message::TerminalCommandChanged)
             .width(Length::Fill),
+            button(text("Restart backend")).on_press(Message::RestartBackend),
         ]
         .spacing(10);
         let profiles = self

@@ -132,17 +132,51 @@ pub async fn ensure_backend() -> Result<(), String> {
     connect_or_start().await.map(|_| ())
 }
 
-pub async fn pipe_backend_logs() -> Result<(), String> {
-    let mut client = connect_or_start().await?;
-    let mut logs = client
-        .stream_logs(Request::new(LogStreamRequest {}))
-        .await
-        .map_err(|error| error.to_string())?
-        .into_inner();
-    while let Some(entry) = logs.message().await.map_err(|error| error.to_string())? {
-        println!("[iron-file backend] {}", entry.message);
+pub async fn restart_backend() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = Command::new("pkill")
+            .args(["-x", "iron-file-backend"])
+            .status();
+        sleep(Duration::from_millis(100)).await;
     }
-    Err("The backend log stream ended".into())
+    #[cfg(not(target_os = "linux"))]
+    {
+        return Err("Restarting the backend is not supported on this platform".into());
+    }
+    ensure_backend().await
+}
+
+pub async fn pipe_backend_logs() -> Result<(), String> {
+    loop {
+        let mut client = match connect_or_start().await {
+            Ok(client) => client,
+            Err(error) => {
+                eprintln!("[iron-file backend] log connection failed: {error}");
+                sleep(STARTUP_RETRY_DELAY).await;
+                continue;
+            }
+        };
+        let mut logs = match client.stream_logs(Request::new(LogStreamRequest {})).await {
+            Ok(response) => response.into_inner(),
+            Err(error) => {
+                eprintln!("[iron-file backend] log subscription failed: {error}");
+                sleep(STARTUP_RETRY_DELAY).await;
+                continue;
+            }
+        };
+        loop {
+            match logs.message().await {
+                Ok(Some(entry)) => println!("[iron-file backend] {}", entry.message),
+                Ok(None) => break,
+                Err(error) => {
+                    eprintln!("[iron-file backend] log stream failed: {error}");
+                    break;
+                }
+            }
+        }
+        sleep(STARTUP_RETRY_DELAY).await;
+    }
 }
 
 async fn connect_or_start() -> Result<FileBrowserClient<tonic::transport::Channel>, String> {

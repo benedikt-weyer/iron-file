@@ -1,3 +1,5 @@
 #!/usr/bin/env sh
 
+pkill -x iron-file-backend 2>/dev/null || true
+
 exec cargo run --package iron-file-iced -- "$@"
