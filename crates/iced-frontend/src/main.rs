@@ -1,13 +1,15 @@
 use std::{
-    collections::HashMap,
+    cell::Cell,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    rc::Rc,
     time::{Duration, Instant},
 };
 
 use iced::{
-    Border, Color, Element, Font, Length, Point, Task, Theme, mouse,
+    Border, Color, Element, Font, Length, Point, Subscription, Task, Theme, keyboard, mouse,
     widget::{
         Space, button, column, container, image, mouse_area, pick_list, radio, responsive, row,
         scrollable, slider, stack, svg, text, text_input, toggler, tooltip,
@@ -30,6 +32,7 @@ fn main() -> iced::Result {
     }
     iced::application("Iron File", Gui::update, Gui::view)
         .theme(Gui::theme)
+        .subscription(Gui::subscription)
         .run_with(|| {
             let gui = Gui::new();
             let task = gui.load_initial_directory();
@@ -79,6 +82,12 @@ struct Gui {
     icon_themes: Vec<String>,
     entry_icons: HashMap<PathBuf, Option<PathBuf>>,
     thumbnail_handles: HashMap<PathBuf, image::Handle>,
+    selected_entries: HashSet<PathBuf>,
+    selection_anchor: Option<PathBuf>,
+    modifiers: keyboard::Modifiers,
+    browser_pointer: Point,
+    rectangle_selection: Option<RectangleSelection>,
+    tile_columns: Rc<Cell<usize>>,
 }
 
 const DEFAULT_TERMINAL_CHOICE: &str = "System default";
@@ -124,6 +133,13 @@ struct ContextEntry {
     opener: Option<Result<String, String>>,
 }
 
+#[derive(Debug, Clone)]
+struct RectangleSelection {
+    start: Point,
+    end: Point,
+    initial_selection: HashSet<PathBuf>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
     Browser,
@@ -150,6 +166,10 @@ enum Message {
         path: PathBuf,
         is_directory: bool,
     },
+    ModifiersChanged(keyboard::Modifiers),
+    StartRectangleSelection,
+    RectanglePointerMoved(Point),
+    FinishRectangleSelection,
     OpenParent,
     ShowBrowser,
     ShowPreferences,
@@ -212,6 +232,15 @@ enum Message {
 }
 
 impl Gui {
+    fn subscription(&self) -> Subscription<Message> {
+        iced::event::listen_raw(|event, _, _| match event {
+            iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+                Some(Message::ModifiersChanged(modifiers))
+            }
+            _ => None,
+        })
+    }
+
     fn new() -> Self {
         let directory_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let config_store = ConfigStore::from_environment();
@@ -261,6 +290,12 @@ impl Gui {
             icon_themes: available_icon_themes(),
             entry_icons: HashMap::new(),
             thumbnail_handles: HashMap::new(),
+            selected_entries: HashSet::new(),
+            selection_anchor: None,
+            modifiers: keyboard::Modifiers::default(),
+            browser_pointer: Point::ORIGIN,
+            rectangle_selection: None,
+            tile_columns: Rc::new(Cell::new(1)),
         }
     }
 
@@ -306,6 +341,38 @@ impl Gui {
             }
             Message::OpenAddress => self.open_path(PathBuf::from(&self.address)),
             Message::OpenPath(path) => self.open_path(path),
+            Message::ModifiersChanged(modifiers) => {
+                self.modifiers = modifiers;
+                Task::none()
+            }
+            Message::StartRectangleSelection => {
+                self.rectangle_selection = Some(RectangleSelection {
+                    start: self.browser_pointer,
+                    end: self.browser_pointer,
+                    initial_selection: if self.modifiers.command() {
+                        self.selected_entries.clone()
+                    } else {
+                        HashSet::new()
+                    },
+                });
+                if !self.modifiers.command() {
+                    self.selected_entries.clear();
+                    self.selection_anchor = None;
+                }
+                Task::none()
+            }
+            Message::RectanglePointerMoved(position) => {
+                self.browser_pointer = position;
+                if let Some(selection) = &mut self.rectangle_selection {
+                    selection.end = position;
+                }
+                self.update_rectangle_selection();
+                Task::none()
+            }
+            Message::FinishRectangleSelection => {
+                self.rectangle_selection = None;
+                Task::none()
+            }
             Message::NavigateBack => self.navigate_history(-1),
             Message::NavigateForward => self.navigate_history(1),
             Message::EntryClicked { path, is_directory } => {
@@ -722,6 +789,7 @@ impl Gui {
     }
 
     fn handle_entry_click(&mut self, path: PathBuf, is_directory: bool) -> Task<Message> {
+        self.select_entry(&path);
         let now = Instant::now();
         let is_double_click =
             self.last_entry_click
@@ -744,6 +812,88 @@ impl Gui {
             Task::perform(open_file(path), Message::FileOpened)
         } else {
             self.open_path(path)
+        }
+    }
+
+    fn select_entry(&mut self, path: &Path) {
+        let add_to_selection = self.modifiers.command();
+        let range_selection = self.modifiers.shift();
+        if range_selection {
+            let anchor = self.selection_anchor.as_deref().unwrap_or(path);
+            let anchor_index = self
+                .entries
+                .iter()
+                .position(|entry| Path::new(&entry.path) == anchor);
+            let target_index = self
+                .entries
+                .iter()
+                .position(|entry| Path::new(&entry.path) == path);
+            if let (Some(anchor_index), Some(target_index)) = (anchor_index, target_index) {
+                if !add_to_selection {
+                    self.selected_entries.clear();
+                }
+                let (start, end) = if anchor_index <= target_index {
+                    (anchor_index, target_index)
+                } else {
+                    (target_index, anchor_index)
+                };
+                self.selected_entries.extend(
+                    self.entries[start..=end]
+                        .iter()
+                        .map(|entry| PathBuf::from(&entry.path)),
+                );
+            }
+        } else if add_to_selection {
+            if !self.selected_entries.insert(path.to_path_buf()) {
+                self.selected_entries.remove(path);
+                if self.selection_anchor.as_deref() == Some(path) {
+                    self.selection_anchor = None;
+                }
+            } else {
+                self.selection_anchor = Some(path.to_path_buf());
+            }
+        } else {
+            self.selected_entries.clear();
+            self.selected_entries.insert(path.to_path_buf());
+            self.selection_anchor = Some(path.to_path_buf());
+        }
+        if range_selection {
+            self.selection_anchor = Some(path.to_path_buf());
+        }
+    }
+
+    fn update_rectangle_selection(&mut self) {
+        let Some(selection) = self.rectangle_selection.clone() else {
+            return;
+        };
+
+        let left = selection.start.x.min(selection.end.x);
+        let right = selection.start.x.max(selection.end.x);
+        let top = selection.start.y.min(selection.end.y);
+        let bottom = selection.start.y.max(selection.end.y);
+        let browser = self.active_browser_settings();
+        let tile_width = f32::from(browser.item_size) * 3.5;
+        let tile_height = tile_width * 1.2;
+        let row_height = f32::from(browser.item_size).max(24.0) + 12.0;
+        let columns = self.tile_columns.get().max(1);
+
+        self.selected_entries = selection.initial_selection;
+        for (index, entry) in self.entries.iter().enumerate() {
+            let (x, y, width, height) = if browser.layout == BrowserLayout::Tiles {
+                let column = index % columns;
+                let row = index / columns;
+                (
+                    column as f32 * (tile_width + 8.0),
+                    row as f32 * (tile_height + 8.0),
+                    tile_width,
+                    tile_height,
+                )
+            } else {
+                (0.0, index as f32 * row_height, f32::INFINITY, row_height)
+            };
+            if x < right && x + width > left && y < bottom && y + height > top {
+                self.selected_entries.insert(PathBuf::from(&entry.path));
+            }
         }
     }
 
@@ -996,6 +1146,8 @@ impl Gui {
                 self.record_history(self.directory_path.clone(), history);
                 let _ = directory;
                 self.entries.clear();
+                self.selected_entries.clear();
+                self.selection_anchor = None;
                 self.thumbnail_handles.clear();
                 self.refresh_entry_icons();
                 self.content.clear();
@@ -1063,11 +1215,14 @@ impl Gui {
         let entries = self.entries.iter().fold(column![], |column, entry| {
             let icon = self.entry_icon(entry, browser_settings.item_size);
             let path = PathBuf::from(&entry.path);
+            let is_selected = self.selected_entries.contains(&path);
             if entry.is_directory {
                 column.push(
                     mouse_area(
                         button(row![icon, text(&entry.name)].spacing(8))
-                            .style(file_item_button_style)
+                            .style(move |theme, status| {
+                                file_item_button_style(theme, status, is_selected)
+                            })
                             .width(Length::Fill)
                             .on_press(Message::EntryClicked {
                                 path: path.clone(),
@@ -1084,7 +1239,9 @@ impl Gui {
                 column.push(
                     mouse_area(
                         button(row![icon, text(&entry.name)].spacing(8))
-                            .style(file_item_button_style)
+                            .style(move |theme, status| {
+                                file_item_button_style(theme, status, is_selected)
+                            })
                             .width(Length::Fill)
                             .on_press(Message::EntryClicked {
                                 path: path.clone(),
@@ -1099,16 +1256,19 @@ impl Gui {
             }
         });
         let entries: Element<'_, Message> = if browser_settings.layout == BrowserLayout::Tiles {
+            let tile_columns = Rc::clone(&self.tile_columns);
             responsive(move |size| {
                 let tile_width = f32::from(browser_settings.item_size) * 3.5;
                 let tile_height = tile_width * 1.2;
                 let columns = (size.width / tile_width).floor().max(1.0) as usize;
+                tile_columns.set(columns);
                 let tiles =
                     self.entries
                         .chunks(columns)
                         .fold(column![].spacing(8), |column, chunk| {
                             let tiles = chunk.iter().fold(row![].spacing(8), |row, entry| {
                                 let path = PathBuf::from(&entry.path);
+                                let is_selected = self.selected_entries.contains(&path);
                                 let icon = self.entry_icon(
                                     entry,
                                     browser_settings.item_size.saturating_mul(9) / 5,
@@ -1128,7 +1288,9 @@ impl Gui {
                                 .center_x(Length::Fill)
                                 .center_y(Length::Fill);
                                 let tile = button(tile_content)
-                                    .style(file_item_button_style)
+                                    .style(move |theme, status| {
+                                        file_item_button_style(theme, status, is_selected)
+                                    })
                                     .width(Length::Fixed(tile_width))
                                     .height(Length::Fixed(tile_height))
                                     .on_press(Message::EntryClicked {
@@ -1220,10 +1382,46 @@ impl Gui {
                 .height(Length::Fill)
                 .into()
         };
-        let browser = mouse_area(browser).on_right_press(Message::ShowEntryContext {
-            path: self.directory_path.clone(),
-            is_directory: true,
-        });
+        let selection_overlay: Option<Element<'_, Message>> =
+            self.rectangle_selection.as_ref().map(|selection| {
+                let left = selection.start.x.min(selection.end.x);
+                let top = selection.start.y.min(selection.end.y);
+                let width = (selection.start.x - selection.end.x).abs().max(1.0);
+                let height = (selection.start.y - selection.end.y).abs().max(1.0);
+                container(column![
+                    Space::with_height(top),
+                    row![
+                        Space::with_width(left),
+                        container(Space::new(Length::Fixed(width), Length::Fixed(height))).style(
+                            |theme: &Theme| {
+                                iced::widget::container::Style::default()
+                                    .background(Color::from_rgba8(90, 130, 200, 0.22))
+                                    .border(Border {
+                                        color: theme.palette().primary,
+                                        width: 1.0,
+                                        radius: 4.0.into(),
+                                    })
+                            }
+                        ),
+                    ],
+                ])
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+            });
+        let browser: Element<'_, Message> = stack![browser]
+            .push_maybe(selection_overlay)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+        let browser = mouse_area(browser)
+            .on_right_press(Message::ShowEntryContext {
+                path: self.directory_path.clone(),
+                is_directory: true,
+            })
+            .on_press(Message::StartRectangleSelection)
+            .on_move(Message::RectanglePointerMoved)
+            .on_release(Message::FinishRectangleSelection);
         let resize_handle = mouse_area(
             container(Space::new(Length::Fixed(6.0), Length::Fill))
                 .width(Length::Fixed(6.0))
@@ -1807,7 +2005,7 @@ fn icon_theme_directories(theme: &str) -> Vec<PathBuf> {
     directories
 }
 
-fn file_item_button_style(theme: &Theme, status: button::Status) -> button::Style {
+fn file_item_button_style(theme: &Theme, status: button::Status, selected: bool) -> button::Style {
     let base = button::text(theme, status);
     let style = button::Style {
         border: Border {
@@ -1816,7 +2014,12 @@ fn file_item_button_style(theme: &Theme, status: button::Status) -> button::Styl
         },
         ..base
     };
-    if matches!(status, button::Status::Hovered) {
+    if selected {
+        button::Style {
+            text_color: theme.palette().background,
+            ..style.with_background(theme.palette().primary)
+        }
+    } else if matches!(status, button::Status::Hovered) {
         style.with_background(Color::from_rgba8(128, 128, 128, 0.18))
     } else {
         style
