@@ -18,6 +18,7 @@ use tokio_stream::{
     wrappers::{ReceiverStream, UnixListenerStream},
 };
 use tonic::{Request, Response, Status, transport::Server};
+use zip::{CompressionMethod, ZipArchive, ZipWriter, write::FileOptions};
 
 use proto::{
     BrowseResponse, BrowserError, CreateEntryRequest, DeleteEntriesRequest, Directory,
@@ -204,6 +205,47 @@ impl FileBrowser for FileBrowserService {
         }))
     }
 
+    async fn compress_entries(
+        &self,
+        request: Request<FileCommandRequest>,
+    ) -> Result<Response<FileCommandResponse>, Status> {
+        let request = request.into_inner();
+        let destination = PathBuf::from(request.destination);
+        let compression_level = request.compression_level.clamp(0, 9);
+        let compression_type = compression_method(&request.compression_type)?;
+        let archive = compress_entries(
+            request.sources.into_iter().map(PathBuf::from).collect(),
+            &destination,
+            compression_level,
+            compression_type,
+        )
+        .map_err(Status::internal)?;
+        self.log(format!("Created archive {}", archive.display()));
+        Ok(Response::new(FileCommandResponse {
+            copied_paths: vec![archive.display().to_string()],
+        }))
+    }
+
+    async fn extract_archives(
+        &self,
+        request: Request<FileCommandRequest>,
+    ) -> Result<Response<FileCommandResponse>, Status> {
+        let request = request.into_inner();
+        let destination = PathBuf::from(request.destination);
+        let paths = extract_archives(
+            request.sources.into_iter().map(PathBuf::from).collect(),
+            &destination,
+        )
+        .map_err(Status::internal)?;
+        self.log(format!("Extracted {} archive(s)", paths.len()));
+        Ok(Response::new(FileCommandResponse {
+            copied_paths: paths
+                .into_iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+        }))
+    }
+
     async fn stream_logs(
         &self,
         _: Request<LogStreamRequest>,
@@ -344,6 +386,123 @@ fn sort_file_entries(entries: &mut [FileEntry]) {
             entry.name.to_lowercase(),
         )
     });
+}
+
+fn compress_entries(
+    sources: Vec<PathBuf>,
+    destination: &Path,
+    compression_level: i32,
+    compression_type: CompressionMethod,
+) -> Result<PathBuf, String> {
+    if sources.is_empty() || !destination.is_dir() {
+        return Err("select entries and a destination directory".into());
+    }
+    let name = if sources.len() == 1 {
+        sources[0]
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| format!("{name}.zip"))
+            .unwrap_or_else(|| "archive.zip".into())
+    } else {
+        "archive.zip".into()
+    };
+    let archive_path = available_copy_path(destination.join(name));
+    let file = File::create(&archive_path)
+        .map_err(|error| format!("could not create {}: {error}", archive_path.display()))?;
+    let mut archive = ZipWriter::new(file);
+    let options = FileOptions::default()
+        .compression_method(compression_type)
+        .compression_level(Some(compression_level));
+    for source in &sources {
+        let root = source
+            .file_name()
+            .ok_or_else(|| format!("{} has no file name", source.display()))?;
+        add_archive_path(&mut archive, source, Path::new(root), options)?;
+    }
+    archive
+        .finish()
+        .map_err(|error| format!("could not finish archive: {error}"))?;
+    Ok(archive_path)
+}
+
+fn compression_method(value: &str) -> Result<CompressionMethod, Status> {
+    match value {
+        "store" => Ok(CompressionMethod::Stored),
+        "deflate" | "" => Ok(CompressionMethod::Deflated),
+        "bzip2" => Ok(CompressionMethod::Bzip2),
+        "zstd" => Ok(CompressionMethod::Zstd),
+        _ => Err(Status::invalid_argument("unsupported compression type")),
+    }
+}
+
+fn add_archive_path(
+    archive: &mut ZipWriter<File>,
+    source: &Path,
+    archive_path: &Path,
+    options: FileOptions,
+) -> Result<(), String> {
+    let name = archive_path.to_string_lossy().replace('\\', "/");
+    if source.is_dir() {
+        archive
+            .add_directory(format!("{name}/"), options)
+            .map_err(|error| error.to_string())?;
+        for entry in std::fs::read_dir(source).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            add_archive_path(
+                archive,
+                &entry.path(),
+                &archive_path.join(entry.file_name()),
+                options,
+            )?;
+        }
+    } else if source.is_file() {
+        archive
+            .start_file(name, options)
+            .map_err(|error| error.to_string())?;
+        let mut input = File::open(source).map_err(|error| error.to_string())?;
+        io::copy(&mut input, archive).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn extract_archives(sources: Vec<PathBuf>, destination: &Path) -> Result<Vec<PathBuf>, String> {
+    if !destination.is_dir() {
+        return Err(format!("{} is not a directory", destination.display()));
+    }
+    sources
+        .into_iter()
+        .map(|source| {
+            if source
+                .extension()
+                .is_none_or(|extension| extension != "zip")
+            {
+                return Err(format!("{} is not a ZIP archive", source.display()));
+            }
+            let name = source.file_stem().unwrap_or_default();
+            let output = available_copy_path(destination.join(name));
+            std::fs::create_dir(&output).map_err(|error| error.to_string())?;
+            let file = File::open(&source).map_err(|error| error.to_string())?;
+            let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
+            for index in 0..archive.len() {
+                let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
+                let Some(name) = entry.enclosed_name().map(PathBuf::from) else {
+                    return Err(format!("{} contains an unsafe path", source.display()));
+                };
+                let path = output.join(name);
+                if entry.is_dir() {
+                    std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+                } else {
+                    let parent = path
+                        .parent()
+                        .ok_or_else(|| "archive entry has no parent".to_string())?;
+                    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                    let mut output_file = File::create(path).map_err(|error| error.to_string())?;
+                    io::copy(&mut entry, &mut output_file).map_err(|error| error.to_string())?;
+                }
+            }
+            Ok(output)
+        })
+        .collect()
 }
 
 fn copy_entries(
@@ -746,6 +905,41 @@ mod tests {
         assert!(file.is_file());
         assert!(directory.is_dir());
         assert!(create_entry(&root, "nested/name", false).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn compresses_and_extracts_selected_entries() {
+        let root = std::env::temp_dir().join(format!(
+            "iron-file-archive-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        let source = root.join("source");
+        let archives = root.join("archives");
+        let extracted = root.join("extracted");
+        std::fs::create_dir_all(source.join("folder")).unwrap();
+        std::fs::create_dir_all(&archives).unwrap();
+        std::fs::create_dir_all(&extracted).unwrap();
+        std::fs::write(source.join("folder/file.txt"), "contents").unwrap();
+
+        let archive = compress_entries(
+            vec![source.join("folder")],
+            &archives,
+            6,
+            CompressionMethod::Deflated,
+        )
+        .unwrap();
+        let outputs = extract_archives(vec![archive], &extracted).unwrap();
+
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(outputs[0].join("folder/file.txt")).unwrap(),
+            "contents"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }

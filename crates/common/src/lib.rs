@@ -102,6 +102,8 @@ pub async fn copy_entries(
             .map(|path| path.display().to_string())
             .collect(),
         destination: destination.display().to_string(),
+        compression_level: 0,
+        compression_type: String::new(),
     };
     let mut client = connect_or_start().await?;
     match client.copy_entries(Request::new(request.clone())).await {
@@ -166,6 +168,8 @@ pub async fn create_symlinks(
                 .map(|path| path.display().to_string())
                 .collect(),
             destination: destination.display().to_string(),
+            compression_level: 0,
+            compression_type: String::new(),
         }))
         .await
         .map(|response| {
@@ -200,6 +204,62 @@ pub async fn create_entry(
                 .next()
                 .map(PathBuf::from)
                 .unwrap_or_default()
+        })
+        .map_err(|error| error.to_string())
+}
+
+pub async fn compress_entries(
+    sources: Vec<PathBuf>,
+    destination: PathBuf,
+    compression_level: i32,
+    compression_type: String,
+) -> Result<Vec<PathBuf>, String> {
+    let mut client = connect_or_start().await?;
+    client
+        .compress_entries(Request::new(FileCommandRequest {
+            sources: sources
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+            destination: destination.display().to_string(),
+            compression_level,
+            compression_type,
+        }))
+        .await
+        .map(|response| {
+            response
+                .into_inner()
+                .copied_paths
+                .into_iter()
+                .map(PathBuf::from)
+                .collect()
+        })
+        .map_err(|error| error.to_string())
+}
+
+pub async fn extract_archives(
+    sources: Vec<PathBuf>,
+    destination: PathBuf,
+) -> Result<Vec<PathBuf>, String> {
+    let mut client = connect_or_start().await?;
+    client
+        .extract_archives(Request::new(FileCommandRequest {
+            sources: sources
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+            destination: destination.display().to_string(),
+            compression_level: 0,
+            compression_type: String::new(),
+        }))
+        .await
+        .map(|response| {
+            response
+                .into_inner()
+                .copied_paths
+                .into_iter()
+                .map(PathBuf::from)
+                .collect()
         })
         .map_err(|error| error.to_string())
 }

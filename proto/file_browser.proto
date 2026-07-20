@@ -10,6 +10,8 @@ service FileBrowser {
   rpc DeleteEntries(DeleteEntriesRequest) returns (FileCommandResponse);
   rpc CreateSymlinks(FileCommandRequest) returns (FileCommandResponse);
   rpc CreateEntry(CreateEntryRequest) returns (FileCommandResponse);
+  rpc CompressEntries(FileCommandRequest) returns (FileCommandResponse);
+  rpc ExtractArchives(FileCommandRequest) returns (FileCommandResponse);
   rpc StreamLogs(LogStreamRequest) returns (stream LogEntry);
 }
 
@@ -45,6 +47,8 @@ message ThumbnailResponse {
 message FileCommandRequest {
   repeated string sources = 1;
   string destination = 2;
+  int32 compression_level = 3;
+  string compression_type = 4;
 }
 
 message FileCommandResponse {

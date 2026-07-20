@@ -19,10 +19,10 @@ use iced::{
 };
 use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{
-    browse_with_thumbnails,
+    browse_with_thumbnails, compress_entries,
     config::{BrowserLayout, BrowserSettings, ColorMode, ConfigStore, Profile, SidebarLocation},
     copy_entries, create_entry, create_symlinks, create_thumbnail, delete_entries, ensure_backend,
-    pipe_backend_logs, proto, restart_backend, stream_directory,
+    extract_archives, pipe_backend_logs, proto, restart_backend, stream_directory,
 };
 use proto::{BrowseResponse, browse_response::Payload};
 use serde::Deserialize;
@@ -95,6 +95,9 @@ struct Gui {
     pending_create: Option<(PathBuf, bool)>,
     create_entry_name: String,
     pending_profile_reset: bool,
+    pending_compression: bool,
+    compression_level: u8,
+    compression_type: ArchiveCompression,
     selection_anchor: Option<PathBuf>,
     modifiers: keyboard::Modifiers,
     browser_pointer: Point,
@@ -172,6 +175,8 @@ enum BrowserCommand {
     DeleteSelection,
     AddSymlinkToPasteBuffer(PathBuf),
     CreateSymlinksHere(PathBuf),
+    CompressSelection,
+    ExtractSelection,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -186,6 +191,25 @@ struct AccentPickerState {
     hue: u16,
     saturation: u8,
     value: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArchiveCompression {
+    Store,
+    Deflate,
+    Bzip2,
+    Zstd,
+}
+
+impl ArchiveCompression {
+    fn value(self) -> &'static str {
+        match self {
+            Self::Store => "store",
+            Self::Deflate => "deflate",
+            Self::Bzip2 => "bzip2",
+            Self::Zstd => "zstd",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -223,6 +247,14 @@ enum Message {
     },
     ExecuteBrowserCommand(BrowserCommand),
     FileCopyFinished(Result<Vec<PathBuf>, String>),
+    ArchiveFinished {
+        action: &'static str,
+        result: Result<Vec<PathBuf>, String>,
+    },
+    CompressionLevelChanged(u8),
+    CompressionTypeSelected(ArchiveCompression),
+    ConfirmCompression,
+    CancelCompression,
     ConfirmDelete,
     CancelDelete,
     SelectDeleteDialogAction(bool),
@@ -420,6 +452,9 @@ impl Gui {
             pending_create: None,
             create_entry_name: String::new(),
             pending_profile_reset: false,
+            pending_compression: false,
+            compression_level: 6,
+            compression_type: ArchiveCompression::Deflate,
             selection_anchor: None,
             modifiers: keyboard::Modifiers::default(),
             browser_pointer: Point::ORIGIN,
@@ -518,6 +553,32 @@ impl Gui {
                     Task::none()
                 }
             },
+            Message::ArchiveFinished { action, result } => match result {
+                Ok(paths) => {
+                    self.status = format!("{action} {} item(s)", paths.len());
+                    self.open_path(self.directory_path.clone())
+                }
+                Err(error) => {
+                    self.status = format!("{action} failed: {error}");
+                    Task::none()
+                }
+            },
+            Message::CompressionLevelChanged(level) => {
+                self.compression_level = level;
+                Task::none()
+            }
+            Message::CompressionTypeSelected(compression_type) => {
+                self.compression_type = compression_type;
+                Task::none()
+            }
+            Message::ConfirmCompression => {
+                self.pending_compression = false;
+                self.execute_compression()
+            }
+            Message::CancelCompression => {
+                self.pending_compression = false;
+                Task::none()
+            }
             Message::ConfirmDelete => {
                 let Some(paths) = self.pending_delete.take() else {
                     return Task::none();
@@ -1303,7 +1364,53 @@ impl Gui {
                     Message::FileCopyFinished,
                 )
             }
+            BrowserCommand::CompressSelection => {
+                if self.selected_entries.is_empty() {
+                    self.status = "Select files or folders first".into();
+                } else {
+                    self.pending_compression = true;
+                }
+                Task::none()
+            }
+            BrowserCommand::ExtractSelection => {
+                let mut paths = self.selected_entries.iter().cloned().collect::<Vec<_>>();
+                paths.sort();
+                if paths.is_empty() {
+                    self.status = "Select files or folders first".into();
+                    return Task::none();
+                }
+                self.status = format!("Extracting {} archive(s)...", paths.len());
+                Task::perform(
+                    extract_archives(paths, self.directory_path.clone()),
+                    |result| Message::ArchiveFinished {
+                        action: "Extracted",
+                        result,
+                    },
+                )
+            }
         }
+    }
+
+    fn execute_compression(&mut self) -> Task<Message> {
+        let mut paths = self.selected_entries.iter().cloned().collect::<Vec<_>>();
+        paths.sort();
+        if paths.is_empty() {
+            self.status = "Select files or folders first".into();
+            return Task::none();
+        }
+        self.status = format!("Compressing {} item(s)...", paths.len());
+        Task::perform(
+            compress_entries(
+                paths,
+                self.directory_path.clone(),
+                i32::from(self.compression_level),
+                self.compression_type.value().into(),
+            ),
+            |result| Message::ArchiveFinished {
+                action: "Compressed",
+                result,
+            },
+        )
     }
 
     fn update_rectangle_selection(&mut self) {
@@ -1894,28 +2001,45 @@ impl Gui {
                 tooltip::Position::Bottom,
             ));
         }
+        let has_selection = !self.selected_entries.is_empty();
         let quick_actions = container(
-            row![tooltip(
-                button(icon_text(if browser_settings.show_hidden_files {
-                    "eye-off"
-                } else {
-                    "eye"
-                }))
-                .style(move |theme, status| {
-                    if browser_settings.show_hidden_files {
-                        button::primary(theme, status)
+            row![
+                tooltip(
+                    button(icon_text(if browser_settings.show_hidden_files {
+                        "eye-off"
                     } else {
-                        button::text(theme, status)
-                    }
-                })
-                .on_press(Message::ToggleHiddenFiles),
-                text(if browser_settings.show_hidden_files {
-                    "Hide hidden files"
-                } else {
-                    "Show hidden files"
-                }),
-                tooltip::Position::Bottom,
-            )]
+                        "eye"
+                    }))
+                    .style(move |theme, status| {
+                        if browser_settings.show_hidden_files {
+                            button::primary(theme, status)
+                        } else {
+                            button::text(theme, status)
+                        }
+                    })
+                    .on_press(Message::ToggleHiddenFiles),
+                    text(if browser_settings.show_hidden_files {
+                        "Hide hidden files"
+                    } else {
+                        "Show hidden files"
+                    }),
+                    tooltip::Position::Bottom,
+                ),
+                tooltip(
+                    button(icon_text("archive")).on_press_maybe(has_selection.then_some(
+                        Message::ExecuteBrowserCommand(BrowserCommand::CompressSelection,)
+                    )),
+                    text("Compress selection"),
+                    tooltip::Position::Bottom,
+                ),
+                tooltip(
+                    button(icon_text("archive-restore")).on_press_maybe(has_selection.then_some(
+                        Message::ExecuteBrowserCommand(BrowserCommand::ExtractSelection,)
+                    )),
+                    text("Extract selected ZIP archives"),
+                    tooltip::Position::Bottom,
+                ),
+            ]
             .spacing(8),
         )
         .width(Length::Fill)
@@ -1930,10 +2054,7 @@ impl Gui {
             tooltip::Position::Bottom,
         ));
         let tiles_layout = browser_settings.layout == BrowserLayout::Tiles;
-        let entry_count_status = self
-            .status
-            .ends_with(" entries")
-            .then(|| self.status.clone());
+        let info_status = self.status.clone();
         let browser: Element<'_, Message> = if browser_settings.preview_enabled {
             let file_pane: Element<'_, Message> = if tiles_layout {
                 container(entries)
@@ -1999,30 +2120,27 @@ impl Gui {
             .on_press(Message::StartRectangleSelection)
             .on_move(Message::RectanglePointerMoved)
             .on_release(Message::FinishRectangleSelection);
-        let entry_count_overlay: Option<Element<'_, Message>> =
-            entry_count_status.as_ref().map(|status| {
-                container(
-                    container(text(status.clone()))
-                        .padding([4, 8])
-                        .style(|theme: &Theme| {
-                            iced::widget::container::Style::default()
-                                .background(Color::from_rgba8(128, 128, 128, 0.22))
-                                .border(Border {
-                                    color: theme.palette().primary.scale_alpha(0.45),
-                                    width: 1.0,
-                                    radius: 4.0.into(),
-                                })
-                        }),
-                )
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .padding(8)
-                .align_x(iced::alignment::Horizontal::Right)
-                .align_y(iced::alignment::Vertical::Bottom)
-                .into()
-            });
+        let info_overlay: Element<'_, Message> = container(
+            container(text(info_status))
+                .padding([4, 8])
+                .style(|theme: &Theme| {
+                    iced::widget::container::Style::default()
+                        .background(Color::from_rgba8(128, 128, 128, 0.22))
+                        .border(Border {
+                            color: theme.palette().primary.scale_alpha(0.45),
+                            width: 1.0,
+                            radius: 4.0.into(),
+                        })
+                }),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(8)
+        .align_x(iced::alignment::Horizontal::Right)
+        .align_y(iced::alignment::Vertical::Bottom)
+        .into();
         let browser: Element<'_, Message> = stack![browser]
-            .push_maybe(entry_count_overlay)
+            .push(info_overlay)
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
@@ -2049,12 +2167,7 @@ impl Gui {
             .spacing(16)
             .width(Length::Fill)
             .height(Length::Fill);
-        let status: Element<'_, Message> = if entry_count_status.is_some() {
-            Space::with_height(Length::Fixed(0.0)).into()
-        } else {
-            text(&self.status).into()
-        };
-        let content = column![address_bar, status, main_content];
+        let content = column![address_bar, main_content];
 
         let page = container(content.spacing(12).padding(16).height(Length::Fill))
             .width(Length::Fill)
@@ -2326,11 +2439,83 @@ impl Gui {
             .width(Length::Fill)
             .height(Length::Fill)
         });
+        let compression_dialog = self.pending_compression.then(|| {
+            let dialog = container(
+                column![
+                    text("Compress selection"),
+                    text("Compression type"),
+                    radio(
+                        "Store (no compression)",
+                        ArchiveCompression::Store,
+                        Some(self.compression_type),
+                        Message::CompressionTypeSelected,
+                    ),
+                    radio(
+                        "Deflate",
+                        ArchiveCompression::Deflate,
+                        Some(self.compression_type),
+                        Message::CompressionTypeSelected,
+                    ),
+                    radio(
+                        "Bzip2",
+                        ArchiveCompression::Bzip2,
+                        Some(self.compression_type),
+                        Message::CompressionTypeSelected,
+                    ),
+                    radio(
+                        "Zstd",
+                        ArchiveCompression::Zstd,
+                        Some(self.compression_type),
+                        Message::CompressionTypeSelected,
+                    ),
+                    row![
+                        text("Compression level"),
+                        slider(
+                            0..=9,
+                            self.compression_level,
+                            Message::CompressionLevelChanged
+                        )
+                        .width(Length::Fill),
+                        text(self.compression_level.to_string()),
+                    ]
+                    .spacing(10),
+                    row![
+                        button(text("Cancel")).on_press(Message::CancelCompression),
+                        button(text("Compress")).on_press(Message::ConfirmCompression),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(12),
+            )
+            .width(Length::Fixed(320.0))
+            .padding(16)
+            .style(|theme: &Theme| {
+                iced::widget::container::Style::default()
+                    .background(theme.palette().background)
+                    .border(Border {
+                        color: theme.palette().primary,
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    })
+            });
+            stack![
+                mouse_area(Space::new(Length::Fill, Length::Fill))
+                    .on_press(Message::CancelCompression),
+                container(dialog)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+        });
 
         stack![page]
             .push_maybe(overlay)
             .push_maybe(delete_confirmation)
             .push_maybe(create_dialog)
+            .push_maybe(compression_dialog)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
