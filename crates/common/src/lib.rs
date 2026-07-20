@@ -54,10 +54,20 @@ fn append_suffix(path: &Path, suffix: &str) -> PathBuf {
 }
 
 pub async fn browse(path: PathBuf) -> Result<proto::BrowseResponse, String> {
+    browse_with_thumbnails(path, None).await
+}
+
+pub async fn browse_with_thumbnails(
+    path: PathBuf,
+    thumbnail_directory: Option<PathBuf>,
+) -> Result<proto::BrowseResponse, String> {
     let mut client = connect_or_start().await?;
     client
         .open_path(Request::new(OpenPathRequest {
             path: path.display().to_string(),
+            thumbnail_directory: thumbnail_directory
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
         }))
         .await
         .map(|response| response.into_inner())

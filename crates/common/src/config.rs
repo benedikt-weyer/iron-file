@@ -72,6 +72,8 @@ pub struct BrowserSettings {
     pub sidebar_width: u16,
     #[serde(default = "default_icon_theme")]
     pub icon_theme: String,
+    #[serde(default = "default_thumbnail_location")]
+    pub thumbnail_location: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -318,6 +320,9 @@ impl ConfigStore {
                 location.path = expand_home_path(&location.path);
             }
         }
+        if let Some(browser) = file.browser.as_mut() {
+            browser.thumbnail_location = expand_home_path(&browser.thumbnail_location);
+        }
         let inherited = file
             .base_profile
             .as_deref()
@@ -445,6 +450,10 @@ fn default_sidebar_width() -> u16 {
 
 fn default_icon_theme() -> String {
     default_browser_settings().icon_theme
+}
+
+fn default_thumbnail_location() -> PathBuf {
+    default_browser_settings().thumbnail_location
 }
 
 fn default_profile_file() -> ProfileFile {
@@ -587,6 +596,7 @@ mod tests {
         browser.terminal_command = "foot".into();
         browser.sidebar_width = 240;
         browser.icon_theme = "Papirus-Dark".into();
+        browser.thumbnail_location = PathBuf::from("/tmp/iron-file-thumbnails");
 
         let saved = store.save_browser_settings(&profile, browser).unwrap();
 
@@ -594,11 +604,16 @@ mod tests {
         assert_eq!(saved.browser.terminal_command, "foot");
         assert_eq!(saved.browser.sidebar_width, 240);
         assert_eq!(saved.browser.icon_theme, "Papirus-Dark");
+        assert_eq!(
+            saved.browser.thumbnail_location,
+            PathBuf::from("/tmp/iron-file-thumbnails")
+        );
         let saved_toml = fs::read_to_string(&profile.path).unwrap();
         assert!(saved_toml.contains("single_click_opens_folders = true"));
         assert!(saved_toml.contains("terminal_command = \"foot\""));
         assert!(saved_toml.contains("sidebar_width = 240"));
         assert!(saved_toml.contains("icon_theme = \"Papirus-Dark\""));
+        assert!(saved_toml.contains("thumbnail_location = \"/tmp/iron-file-thumbnails\""));
         fs::remove_dir_all(directory).unwrap();
     }
 

@@ -15,12 +15,14 @@ message LogEntry {
 
 message OpenPathRequest {
   string path = 1;
+  string thumbnail_directory = 2;
 }
 
 message FileEntry {
   string path = 1;
   string name = 2;
   bool is_directory = 3;
+  string thumbnail_path = 4;
 }
 
 message Directory {

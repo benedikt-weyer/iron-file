@@ -9,13 +9,13 @@ use std::{
 use iced::{
     Border, Color, Element, Font, Length, Point, Task, Theme, mouse,
     widget::{
-        Space, button, column, container, mouse_area, pick_list, radio, responsive, row,
+        Space, button, column, container, image, mouse_area, pick_list, radio, responsive, row,
         scrollable, slider, stack, svg, text, text_input, toggler, tooltip,
     },
 };
 use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{
-    browse,
+    browse_with_thumbnails,
     config::{BrowserLayout, BrowserSettings, ColorMode, ConfigStore, Profile, SidebarLocation},
     ensure_backend, pipe_backend_logs, proto,
 };
@@ -30,7 +30,11 @@ fn main() -> iced::Result {
     }
     iced::application("Iron File", Gui::update, Gui::view)
         .theme(Gui::theme)
-        .run_with(|| (Gui::new(), Gui::load_initial_directory()))
+        .run_with(|| {
+            let gui = Gui::new();
+            let task = gui.load_initial_directory();
+            (gui, task)
+        })
 }
 
 #[cfg(target_os = "linux")]
@@ -158,6 +162,7 @@ enum Message {
     TerminalChoiceSelected(String),
     TerminalCommandChanged(String),
     IconThemeSelected(String),
+    ThumbnailLocationChanged(String),
     StartSidebarResize,
     FinishSidebarResize,
     ShowEntryContext {
@@ -238,18 +243,20 @@ impl Gui {
         }
     }
 
-    fn load_initial_directory() -> Task<Message> {
+    fn load_initial_directory(&self) -> Task<Message> {
         let path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let thumbnail_directory = self.active_browser_settings().thumbnail_location;
         Task::batch(
             fonts()
                 .iter()
                 .map(|font| iced::font::load(font.bytes).map(Message::IconFontLoaded))
-                .chain(std::iter::once(Task::perform(browse(path), |result| {
-                    Message::BrowseFinished {
+                .chain(std::iter::once(Task::perform(
+                    browse_with_thumbnails(path, Some(thumbnail_directory)),
+                    |result| Message::BrowseFinished {
                         result,
                         history: HistoryRequest::Initial,
-                    }
-                })))
+                    },
+                )))
                 .chain(std::iter::once(Task::perform(
                     load_mounts(),
                     Message::MountsLoaded,
@@ -370,6 +377,12 @@ impl Gui {
             Message::IconThemeSelected(icon_theme) => {
                 let mut browser = self.active_browser_settings();
                 browser.icon_theme = icon_theme;
+                self.save_browser_settings(browser);
+                Task::none()
+            }
+            Message::ThumbnailLocationChanged(thumbnail_location) => {
+                let mut browser = self.active_browser_settings();
+                browser.thumbnail_location = PathBuf::from(thumbnail_location);
                 self.save_browser_settings(browser);
                 Task::none()
             }
@@ -813,10 +826,11 @@ impl Gui {
     fn request_path(&mut self, path: PathBuf, history: HistoryRequest) -> Task<Message> {
         self.editing_address = false;
         self.status = format!("Loading {}", path.display());
-        Task::perform(browse(path), move |result| Message::BrowseFinished {
-            result,
-            history,
-        })
+        let thumbnail_directory = self.active_browser_settings().thumbnail_location;
+        Task::perform(
+            browse_with_thumbnails(path, Some(thumbnail_directory)),
+            move |result| Message::BrowseFinished { result, history },
+        )
     }
 
     fn apply_response(&mut self, result: Result<BrowseResponse, String>, history: HistoryRequest) {
@@ -1152,7 +1166,12 @@ impl Gui {
     }
 
     fn entry_icon<'a>(&self, entry: &proto::FileEntry, size: u16) -> Element<'a, Message> {
-        if let Some(path) = self
+        if !entry.thumbnail_path.is_empty() {
+            image(image::Handle::from_path(&entry.thumbnail_path))
+                .width(Length::Fixed(f32::from(size)))
+                .height(Length::Fixed(f32::from(size)))
+                .into()
+        } else if let Some(path) = self
             .entry_icons
             .get(&PathBuf::from(&entry.path))
             .and_then(|path| path.as_ref())
@@ -1339,6 +1358,7 @@ impl Gui {
         ]
         .spacing(12);
         let browser = self.active_browser_settings();
+        let thumbnail_location = browser.thumbnail_location.display().to_string();
         let browser_options = column![
             radio(
                 "List",
@@ -1372,6 +1392,9 @@ impl Gui {
             )
             .placeholder("Icon theme")
             .width(Length::Fill),
+            text_input("Thumbnail location", &thumbnail_location,)
+                .on_input(Message::ThumbnailLocationChanged)
+                .width(Length::Fill),
             pick_list(
                 self.terminal_choices(),
                 Some(self.selected_terminal_choice(&browser)),

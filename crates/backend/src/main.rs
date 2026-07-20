@@ -1,12 +1,14 @@
 use std::{
     fs::{File, OpenOptions},
-    io,
+    io::{self, BufWriter},
     path::{Path, PathBuf},
     pin::Pin,
 };
 
 use fs2::FileExt;
+use image::{ImageFormat, ImageReader};
 use iron_file_common::{backend_lock_path, proto, socket_path};
+use sha1::{Digest, Sha1};
 use tokio::{
     net::{UnixListener, UnixStream},
     sync::{broadcast, mpsc},
@@ -39,9 +41,12 @@ impl FileBrowser for FileBrowserService {
         &self,
         request: Request<OpenPathRequest>,
     ) -> Result<Response<BrowseResponse>, Status> {
-        let path = PathBuf::from(request.into_inner().path);
+        let request = request.into_inner();
+        let path = PathBuf::from(request.path);
+        let thumbnail_directory = (!request.thumbnail_directory.is_empty())
+            .then(|| PathBuf::from(request.thumbnail_directory));
         self.log(format!("Opening {}", path.display()));
-        let response = browse(path);
+        let response = browse(path, thumbnail_directory.as_deref());
         if let Some(Payload::Error(error)) = &response.payload {
             self.log(format!("Request failed: {}", error.message));
         }
@@ -136,10 +141,10 @@ async fn bind_singleton_socket(path: &Path) -> io::Result<UnixListener> {
     }
 }
 
-fn browse(path: PathBuf) -> BrowseResponse {
+fn browse(path: PathBuf, thumbnail_directory: Option<&Path>) -> BrowseResponse {
     let display_path = path.display().to_string();
     let payload = match std::fs::metadata(&path) {
-        Ok(metadata) if metadata.is_dir() => directory_payload(&path),
+        Ok(metadata) if metadata.is_dir() => directory_payload(&path, thumbnail_directory),
         Ok(metadata) if metadata.is_file() => file_payload(&path, metadata.len()),
         Ok(_) => error_payload("Unsupported filesystem entry"),
         Err(error) => error_payload(error.to_string()),
@@ -151,7 +156,7 @@ fn browse(path: PathBuf) -> BrowseResponse {
     }
 }
 
-fn directory_payload(path: &Path) -> Payload {
+fn directory_payload(path: &Path, thumbnail_directory: Option<&Path>) -> Payload {
     let entries = match std::fs::read_dir(path) {
         Ok(entries) => entries,
         Err(error) => return error_payload(error.to_string()),
@@ -165,6 +170,10 @@ fn directory_payload(path: &Path) -> Payload {
                 name: entry.file_name().to_string_lossy().into_owned(),
                 is_directory: path.is_dir(),
                 path: path.display().to_string(),
+                thumbnail_path: thumbnail_directory
+                    .and_then(|directory| thumbnail_for(&path, directory))
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default(),
             }
         })
         .collect::<Vec<_>>();
@@ -176,6 +185,38 @@ fn directory_payload(path: &Path) -> Payload {
     });
 
     Payload::Directory(Directory { entries: files })
+}
+
+fn thumbnail_for(path: &Path, directory: &Path) -> Option<PathBuf> {
+    if !path.is_file() {
+        return None;
+    }
+    let thumbnail_path = directory.join(thumbnail_filename(path));
+    if thumbnail_path.is_file() {
+        return Some(thumbnail_path);
+    }
+
+    let image = ImageReader::open(path)
+        .ok()?
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()?;
+    std::fs::create_dir_all(directory).ok()?;
+    let temporary_path = thumbnail_path.with_extension("tmp");
+    let file = File::create(&temporary_path).ok()?;
+    image
+        .thumbnail(256, 256)
+        .write_to(&mut BufWriter::new(file), ImageFormat::Png)
+        .ok()?;
+    std::fs::rename(&temporary_path, &thumbnail_path).ok()?;
+    Some(thumbnail_path)
+}
+
+fn thumbnail_filename(path: &Path) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(path.as_os_str().as_encoded_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 fn file_payload(path: &Path, size: u64) -> Payload {
@@ -200,4 +241,17 @@ fn error_payload(message: impl Into<String>) -> Payload {
     Payload::Error(BrowserError {
         message: message.into(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thumbnail_filename_is_the_sha1_of_the_full_path() {
+        assert_eq!(
+            thumbnail_filename(Path::new("/tmp/image.png")),
+            "0fef0cc8ed6b0e98686a7ae869b2eda3aafce32e"
+        );
+    }
 }

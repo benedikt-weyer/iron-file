@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-iced = { version = "0.13", features = ["lazy", "svg", "tokio"] }
+iced = { version = "0.13", features = ["image", "lazy", "svg", "tokio"] }
 iconflow = { version = "1", features = ["pack-lucide"] }
 iron-file-common = { path = "../common" }
 serde = { version = "1", features = ["derive"] }

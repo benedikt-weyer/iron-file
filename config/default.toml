@@ -14,6 +14,7 @@ single_click_opens_folders = false
 terminal_command = "default"
 sidebar_width = 180
 icon_theme = "bundled"
+thumbnail_location = "~/.cache/iron-file/thumbnails"
 
 [[sidebar_locations]]
 label = "Home"
