@@ -6,6 +6,7 @@ service FileBrowser {
   rpc OpenPath(OpenPathRequest) returns (BrowseResponse);
   rpc ListDirectory(ListDirectoryRequest) returns (stream FileEntry);
   rpc CreateThumbnail(ThumbnailRequest) returns (ThumbnailResponse);
+  rpc CopyEntries(FileCommandRequest) returns (FileCommandResponse);
   rpc StreamLogs(LogStreamRequest) returns (stream LogEntry);
 }
 
@@ -35,6 +36,15 @@ message ThumbnailRequest {
 message ThumbnailResponse {
   string path = 1;
   string thumbnail_path = 2;
+}
+
+message FileCommandRequest {
+  repeated string sources = 1;
+  string destination = 2;
+}
+
+message FileCommandResponse {
+  repeated string copied_paths = 1;
 }
 
 message ListDirectoryRequest {

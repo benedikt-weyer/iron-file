@@ -23,7 +23,7 @@ pub mod proto {
 }
 
 use proto::{
-    ListDirectoryRequest, LogStreamRequest, OpenPathRequest, ThumbnailRequest,
+    FileCommandRequest, ListDirectoryRequest, LogStreamRequest, OpenPathRequest, ThumbnailRequest,
     file_browser_client::FileBrowserClient,
 };
 
@@ -92,6 +92,47 @@ pub async fn create_thumbnail(
         .map_err(|error| error.to_string())
 }
 
+pub async fn copy_entries(
+    sources: Vec<PathBuf>,
+    destination: PathBuf,
+) -> Result<Vec<PathBuf>, String> {
+    let request = FileCommandRequest {
+        sources: sources
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect(),
+        destination: destination.display().to_string(),
+    };
+    let mut client = connect_or_start().await?;
+    match client.copy_entries(Request::new(request.clone())).await {
+        Ok(response) => Ok(response
+            .into_inner()
+            .copied_paths
+            .into_iter()
+            .map(PathBuf::from)
+            .collect()),
+        Err(error) if error.code() == tonic::Code::Unimplemented => {
+            // A development backend can outlive a frontend rebuild. Restart it once so its
+            // gRPC service definition matches the frontend before reporting an error.
+            restart_backend().await?;
+            let mut client = connect_or_start().await?;
+            client
+                .copy_entries(Request::new(request))
+                .await
+                .map(|response| {
+                    response
+                        .into_inner()
+                        .copied_paths
+                        .into_iter()
+                        .map(PathBuf::from)
+                        .collect()
+                })
+                .map_err(|error| error.to_string())
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 pub fn stream_directory(
     path: PathBuf,
 ) -> impl tokio_stream::Stream<Item = Result<proto::FileEntry, String>> {
@@ -136,7 +177,7 @@ pub async fn restart_backend() -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         let _ = Command::new("pkill")
-            .args(["-x", "iron-file-backend"])
+            .args(["-f", "iron-file-backend"])
             .status();
         sleep(Duration::from_millis(100)).await;
     }

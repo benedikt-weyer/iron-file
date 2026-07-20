@@ -20,8 +20,9 @@ use tokio_stream::{
 use tonic::{Request, Response, Status, transport::Server};
 
 use proto::{
-    BrowseResponse, BrowserError, Directory, FileContent, FileEntry, ListDirectoryRequest,
-    LogEntry, LogStreamRequest, OpenPathRequest, ThumbnailRequest, ThumbnailResponse,
+    BrowseResponse, BrowserError, Directory, FileCommandRequest, FileCommandResponse, FileContent,
+    FileEntry, ListDirectoryRequest, LogEntry, LogStreamRequest, OpenPathRequest, ThumbnailRequest,
+    ThumbnailResponse,
     browse_response::Payload,
     file_browser_server::{FileBrowser, FileBrowserServer},
 };
@@ -101,6 +102,37 @@ impl FileBrowser for FileBrowserService {
         Ok(Response::new(ThumbnailResponse {
             path: path.display().to_string(),
             thumbnail_path,
+        }))
+    }
+
+    async fn copy_entries(
+        &self,
+        request: Request<FileCommandRequest>,
+    ) -> Result<Response<FileCommandResponse>, Status> {
+        let request = request.into_inner();
+        let destination = PathBuf::from(request.destination);
+        self.log(format!(
+            "Copying {} item(s) to {}",
+            request.sources.len(),
+            destination.display()
+        ));
+        let copied_paths =
+            copy_entries(request.sources.into_iter().map(PathBuf::from), &destination).map_err(
+                |error| {
+                    self.log(format!("Copy failed: {error}"));
+                    Status::internal(error)
+                },
+            )?;
+        self.log(format!(
+            "Copied {} item(s) to {}",
+            copied_paths.len(),
+            destination.display()
+        ));
+        Ok(Response::new(FileCommandResponse {
+            copied_paths: copied_paths
+                .into_iter()
+                .map(|path| path.display().to_string())
+                .collect(),
         }))
     }
 
@@ -242,6 +274,96 @@ fn sort_file_entries(entries: &mut [FileEntry]) {
     });
 }
 
+fn copy_entries(
+    sources: impl IntoIterator<Item = PathBuf>,
+    destination: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    if !destination.is_dir() {
+        return Err(format!("{} is not a directory", destination.display()));
+    }
+
+    sources
+        .into_iter()
+        .map(|source| {
+            if !source.exists() {
+                return Err(format!("{} does not exist", source.display()));
+            }
+            if source.is_dir() && destination.starts_with(&source) {
+                return Err(format!("cannot copy {} into itself", source.display()));
+            }
+            let name = source
+                .file_name()
+                .ok_or_else(|| format!("{} has no file name", source.display()))?;
+            let target = available_copy_path(destination.join(name));
+            copy_path(&source, &target)?;
+            Ok(target)
+        })
+        .collect()
+}
+
+fn available_copy_path(candidate: PathBuf) -> PathBuf {
+    if !candidate.exists() {
+        return candidate;
+    }
+    let parent = candidate.parent().unwrap_or_else(|| Path::new("."));
+    let name = candidate
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("copy");
+    let (stem, extension) = match name.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() => (stem, format!(".{extension}")),
+        _ => (name, String::new()),
+    };
+    for number in 1.. {
+        let path = parent.join(format!("{stem} (copy {number}){extension}"));
+        if !path.exists() {
+            return path;
+        }
+    }
+    unreachable!("unbounded copy name search")
+}
+
+fn copy_path(source: &Path, target: &Path) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(source).map_err(|error| error.to_string())?;
+    if metadata.file_type().is_symlink() {
+        return copy_symlink(source, target);
+    }
+    if metadata.is_file() {
+        std::fs::copy(source, target)
+            .map(|_| ())
+            .map_err(|error| format!("could not copy {}: {error}", source.display()))
+    } else if metadata.is_dir() {
+        std::fs::create_dir(target)
+            .map_err(|error| format!("could not create {}: {error}", target.display()))?;
+        for entry in std::fs::read_dir(source).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            copy_path(&entry.path(), &target.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        Err(format!(
+            "unsupported filesystem entry: {}",
+            source.display()
+        ))
+    }
+}
+
+#[cfg(unix)]
+fn copy_symlink(source: &Path, target: &Path) -> Result<(), String> {
+    let link_target = std::fs::read_link(source)
+        .map_err(|error| format!("could not read symbolic link {}: {error}", source.display()))?;
+    std::os::unix::fs::symlink(link_target, target)
+        .map_err(|error| format!("could not copy symbolic link {}: {error}", source.display()))
+}
+
+#[cfg(not(unix))]
+fn copy_symlink(source: &Path, _: &Path) -> Result<(), String> {
+    Err(format!(
+        "copying symbolic links is not supported on this platform: {}",
+        source.display()
+    ))
+}
+
 fn thumbnail_for(path: &Path, directory: &Path) -> Result<ThumbnailOutcome, String> {
     if !path.is_file() {
         return Ok(ThumbnailOutcome::NotImage);
@@ -363,5 +485,45 @@ mod tests {
                 ".hidden-file"
             ]
         );
+    }
+
+    #[test]
+    fn copy_entries_copies_files_directories_and_avoids_collisions() {
+        let root = std::env::temp_dir().join(format!(
+            "iron-file-copy-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        let source = root.join("source");
+        let destination = root.join("destination");
+        std::fs::create_dir_all(source.join("folder")).unwrap();
+        std::fs::create_dir_all(&destination).unwrap();
+        std::fs::write(source.join("note.txt"), "note").unwrap();
+        std::fs::write(source.join("folder/nested.txt"), "nested").unwrap();
+
+        let copied = copy_entries(
+            vec![source.join("note.txt"), source.join("folder")],
+            &destination,
+        )
+        .unwrap();
+        assert_eq!(copied.len(), 2);
+        assert_eq!(
+            std::fs::read_to_string(destination.join("note.txt")).unwrap(),
+            "note"
+        );
+        assert_eq!(
+            std::fs::read_to_string(destination.join("folder/nested.txt")).unwrap(),
+            "nested"
+        );
+
+        copy_entries(vec![source.join("note.txt")], &destination).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(destination.join("note (copy 1).txt")).unwrap(),
+            "note"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

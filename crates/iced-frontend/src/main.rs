@@ -19,7 +19,8 @@ use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{
     browse_with_thumbnails,
     config::{BrowserLayout, BrowserSettings, ColorMode, ConfigStore, Profile, SidebarLocation},
-    create_thumbnail, ensure_backend, pipe_backend_logs, proto, restart_backend, stream_directory,
+    copy_entries, create_thumbnail, ensure_backend, pipe_backend_logs, proto, restart_backend,
+    stream_directory,
 };
 use proto::{BrowseResponse, browse_response::Payload};
 use serde::Deserialize;
@@ -83,6 +84,7 @@ struct Gui {
     entry_icons: HashMap<PathBuf, Option<PathBuf>>,
     thumbnail_handles: HashMap<PathBuf, image::Handle>,
     selected_entries: HashSet<PathBuf>,
+    clipboard_entries: Vec<PathBuf>,
     selection_anchor: Option<PathBuf>,
     modifiers: keyboard::Modifiers,
     browser_pointer: Point,
@@ -153,6 +155,12 @@ enum HistoryRequest {
     Existing(usize),
 }
 
+#[derive(Debug, Clone, Copy)]
+enum BrowserCommand {
+    CopySelection,
+    Paste,
+}
+
 #[derive(Debug, Clone)]
 enum Message {
     AddressChanged(String),
@@ -166,6 +174,8 @@ enum Message {
         path: PathBuf,
         is_directory: bool,
     },
+    ExecuteBrowserCommand(BrowserCommand),
+    FileCopyFinished(Result<Vec<PathBuf>, String>),
     ModifiersChanged(keyboard::Modifiers),
     StartRectangleSelection,
     RectanglePointerMoved(Point),
@@ -237,6 +247,19 @@ impl Gui {
             iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
                 Some(Message::ModifiersChanged(modifiers))
             }
+            iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+                if modifiers.command() =>
+            {
+                match key.as_ref() {
+                    keyboard::Key::Character("c" | "C") => Some(Message::ExecuteBrowserCommand(
+                        BrowserCommand::CopySelection,
+                    )),
+                    keyboard::Key::Character("v" | "V") => {
+                        Some(Message::ExecuteBrowserCommand(BrowserCommand::Paste))
+                    }
+                    _ => None,
+                }
+            }
             _ => None,
         })
     }
@@ -291,6 +314,7 @@ impl Gui {
             entry_icons: HashMap::new(),
             thumbnail_handles: HashMap::new(),
             selected_entries: HashSet::new(),
+            clipboard_entries: Vec::new(),
             selection_anchor: None,
             modifiers: keyboard::Modifiers::default(),
             browser_pointer: Point::ORIGIN,
@@ -378,6 +402,17 @@ impl Gui {
             Message::EntryClicked { path, is_directory } => {
                 self.handle_entry_click(path, is_directory)
             }
+            Message::ExecuteBrowserCommand(command) => self.execute_browser_command(command),
+            Message::FileCopyFinished(result) => match result {
+                Ok(paths) => {
+                    self.status = format!("Copied {} item(s)", paths.len());
+                    self.open_path(self.directory_path.clone())
+                }
+                Err(error) => {
+                    self.status = format!("Copy failed: {error}");
+                    Task::none()
+                }
+            },
             Message::OpenParent => {
                 let parent = self.directory_path.parent().map(|path| path.to_path_buf());
                 parent
@@ -859,6 +894,38 @@ impl Gui {
         }
         if range_selection {
             self.selection_anchor = Some(path.to_path_buf());
+        }
+    }
+
+    fn execute_browser_command(&mut self, command: BrowserCommand) -> Task<Message> {
+        match command {
+            BrowserCommand::CopySelection => {
+                let mut entries = self.selected_entries.iter().cloned().collect::<Vec<_>>();
+                entries.sort();
+                if entries.is_empty() {
+                    self.status = "Select files or folders to copy".into();
+                } else {
+                    self.clipboard_entries = entries;
+                    self.context_entry = None;
+                    self.status = format!(
+                        "Copied {} item(s) to the clipboard",
+                        self.clipboard_entries.len()
+                    );
+                }
+                Task::none()
+            }
+            BrowserCommand::Paste => {
+                if self.clipboard_entries.is_empty() {
+                    self.status = "Nothing to paste".into();
+                    return Task::none();
+                }
+                self.context_entry = None;
+                self.status = format!("Copying {} item(s)...", self.clipboard_entries.len());
+                Task::perform(
+                    copy_entries(self.clipboard_entries.clone(), self.directory_path.clone()),
+                    Message::FileCopyFinished,
+                )
+            }
         }
     }
 
@@ -1477,6 +1544,19 @@ impl Gui {
                 }
             };
             let mut actions = column![action].spacing(4);
+            if !self.selected_entries.is_empty() {
+                actions =
+                    actions.push(button(text("Copy selection")).width(Length::Fill).on_press(
+                        Message::ExecuteBrowserCommand(BrowserCommand::CopySelection),
+                    ));
+            }
+            if !self.clipboard_entries.is_empty() {
+                actions = actions.push(
+                    button(text("Paste"))
+                        .width(Length::Fill)
+                        .on_press(Message::ExecuteBrowserCommand(BrowserCommand::Paste)),
+                );
+            }
             if entry.is_directory {
                 actions = actions.push(
                     button(text("Open terminal here"))
