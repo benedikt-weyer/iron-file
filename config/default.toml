@@ -4,7 +4,7 @@ color_mode = "system"
 
 [theme]
 light_highlight = "#4f7cac"
-dark_highlight = "#85b7eb"
+dark_highlight = "#2b313b"
 
 [browser]
 item_size = 32

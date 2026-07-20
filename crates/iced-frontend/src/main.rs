@@ -188,6 +188,20 @@ struct AccentPickerState {
     value: u8,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum PreferenceOption {
+    ColorMode,
+    LightAccent,
+    DarkAccent,
+    Layout,
+    ItemSize,
+    Preview,
+    SingleClickFolders,
+    IconTheme,
+    ThumbnailLocation,
+    Terminal,
+}
+
 #[derive(Debug, Clone)]
 struct PasteBuffer {
     entries: Vec<PathBuf>,
@@ -235,6 +249,7 @@ enum Message {
     RequestProfileReset,
     ConfirmProfileReset,
     CancelProfileReset,
+    ResetPreference(PreferenceOption),
     ColorModeSelected(ColorMode),
     OpenAccentPicker(bool),
     AccentHueChanged(u16),
@@ -626,6 +641,10 @@ impl Gui {
             }
             Message::CancelProfileReset => {
                 self.pending_profile_reset = false;
+                Task::none()
+            }
+            Message::ResetPreference(option) => {
+                self.reset_preference(option);
                 Task::none()
             }
             Message::ColorModeSelected(color_mode) => {
@@ -1030,6 +1049,53 @@ impl Gui {
         .into()
     }
 
+    fn preference_reset_button(&self, option: PreferenceOption) -> Element<'_, Message> {
+        if self.preference_matches_default(option) {
+            return Space::with_width(Length::Fixed(0.0)).into();
+        }
+        tooltip(
+            button(icon_text("rotate-ccw").size(16)).on_press(Message::ResetPreference(option)),
+            text("Reset to default"),
+            tooltip::Position::Bottom,
+        )
+        .into()
+    }
+
+    fn preference_matches_default(&self, option: PreferenceOption) -> bool {
+        let browser = self.active_browser_settings();
+        let browser_defaults = iron_file_common::config::default_browser_settings();
+        let default_thumbnail_location = browser_defaults
+            .thumbnail_location
+            .to_str()
+            .and_then(|path| path.strip_prefix("~/"))
+            .and_then(|path| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(path)))
+            .unwrap_or_else(|| browser_defaults.thumbnail_location.clone());
+        let theme = self.active_theme_settings();
+        let theme_defaults = iron_file_common::config::default_theme_settings();
+        match option {
+            PreferenceOption::ColorMode => self.color_mode == ColorMode::default(),
+            PreferenceOption::LightAccent => {
+                theme.light_highlight == theme_defaults.light_highlight
+            }
+            PreferenceOption::DarkAccent => theme.dark_highlight == theme_defaults.dark_highlight,
+            PreferenceOption::Layout => browser.layout == browser_defaults.layout,
+            PreferenceOption::ItemSize => browser.item_size == browser_defaults.item_size,
+            PreferenceOption::Preview => {
+                browser.preview_enabled == browser_defaults.preview_enabled
+            }
+            PreferenceOption::SingleClickFolders => {
+                browser.single_click_opens_folders == browser_defaults.single_click_opens_folders
+            }
+            PreferenceOption::IconTheme => browser.icon_theme == browser_defaults.icon_theme,
+            PreferenceOption::ThumbnailLocation => {
+                browser.thumbnail_location == default_thumbnail_location
+            }
+            PreferenceOption::Terminal => {
+                browser.terminal_command == browser_defaults.terminal_command
+            }
+        }
+    }
+
     fn active_browser_settings(&self) -> BrowserSettings {
         self.active_profile
             .as_deref()
@@ -1323,6 +1389,61 @@ impl Gui {
         match self.config_store.save_color_mode(profile, color_mode) {
             Ok(saved_profile) => self.apply_saved_profile(saved_profile),
             Err(error) => self.status = error,
+        }
+    }
+
+    fn reset_preference(&mut self, option: PreferenceOption) {
+        let defaults = iron_file_common::config::default_browser_settings();
+        match option {
+            PreferenceOption::ColorMode => self.save_color_mode(ColorMode::default()),
+            PreferenceOption::LightAccent | PreferenceOption::DarkAccent => {
+                let defaults = iron_file_common::config::default_theme_settings();
+                let mut theme = self.active_theme_settings();
+                if matches!(option, PreferenceOption::LightAccent) {
+                    theme.light_highlight = defaults.light_highlight;
+                } else {
+                    theme.dark_highlight = defaults.dark_highlight;
+                }
+                let Some(path) = self.active_profile.clone() else {
+                    self.status = "No active configuration profile".into();
+                    return;
+                };
+                let Some(profile) = self.profiles.iter().find(|profile| profile.path == path)
+                else {
+                    self.status = "The active configuration profile is unavailable".into();
+                    return;
+                };
+                match self.config_store.save_theme_settings(profile, theme) {
+                    Ok(profile) => self.apply_saved_profile(profile),
+                    Err(error) => self.status = error,
+                }
+            }
+            PreferenceOption::Layout
+            | PreferenceOption::ItemSize
+            | PreferenceOption::Preview
+            | PreferenceOption::SingleClickFolders
+            | PreferenceOption::IconTheme
+            | PreferenceOption::ThumbnailLocation
+            | PreferenceOption::Terminal => {
+                let mut browser = self.active_browser_settings();
+                match option {
+                    PreferenceOption::Layout => browser.layout = defaults.layout,
+                    PreferenceOption::ItemSize => browser.item_size = defaults.item_size,
+                    PreferenceOption::Preview => browser.preview_enabled = defaults.preview_enabled,
+                    PreferenceOption::SingleClickFolders => {
+                        browser.single_click_opens_folders = defaults.single_click_opens_folders
+                    }
+                    PreferenceOption::IconTheme => browser.icon_theme = defaults.icon_theme,
+                    PreferenceOption::ThumbnailLocation => {
+                        browser.thumbnail_location = defaults.thumbnail_location
+                    }
+                    PreferenceOption::Terminal => {
+                        browser.terminal_command = defaults.terminal_command
+                    }
+                    _ => unreachable!(),
+                }
+                self.save_browser_settings(browser);
+            }
         }
     }
 
@@ -2412,55 +2533,84 @@ impl Gui {
         let browser = self.active_browser_settings();
         let thumbnail_location = browser.thumbnail_location.display().to_string();
         let browser_options = column![
-            radio(
-                "List",
-                BrowserLayout::List,
-                Some(browser.layout),
-                Message::BrowserLayoutSelected
-            ),
-            radio(
-                "Tiles",
-                BrowserLayout::Tiles,
-                Some(browser.layout),
-                Message::BrowserLayoutSelected
-            ),
+            row![
+                column![
+                    radio(
+                        "List",
+                        BrowserLayout::List,
+                        Some(browser.layout),
+                        Message::BrowserLayoutSelected
+                    ),
+                    radio(
+                        "Tiles",
+                        BrowserLayout::Tiles,
+                        Some(browser.layout),
+                        Message::BrowserLayoutSelected
+                    ),
+                ]
+                .spacing(6)
+                .width(Length::Fill),
+                self.preference_reset_button(PreferenceOption::Layout),
+            ],
             row![
                 text("Item size"),
                 slider(20..=64, browser.item_size, Message::BrowserItemSizeChanged)
                     .width(Length::Fill),
                 text(format!("{} px", browser.item_size)),
+                self.preference_reset_button(PreferenceOption::ItemSize),
             ]
             .spacing(10),
-            toggler(browser.preview_enabled)
-                .label("Show preview pane")
-                .on_toggle(Message::PreviewToggled),
-            toggler(browser.single_click_opens_folders)
-                .label("Open folders with one click")
-                .on_toggle(Message::SingleClickFoldersToggled),
-            pick_list(
-                self.icon_theme_choices(&browser),
-                Some(browser.icon_theme.clone()),
-                Message::IconThemeSelected,
-            )
-            .placeholder("Icon theme")
-            .width(Length::Fill),
-            text_input("Thumbnail location", &thumbnail_location,)
-                .on_input(Message::ThumbnailLocationChanged)
+            row![
+                toggler(browser.preview_enabled)
+                    .label("Show preview pane")
+                    .on_toggle(Message::PreviewToggled)
+                    .width(Length::Fill),
+                self.preference_reset_button(PreferenceOption::Preview),
+            ],
+            row![
+                toggler(browser.single_click_opens_folders)
+                    .label("Open folders with one click")
+                    .on_toggle(Message::SingleClickFoldersToggled)
+                    .width(Length::Fill),
+                self.preference_reset_button(PreferenceOption::SingleClickFolders),
+            ],
+            row![
+                pick_list(
+                    self.icon_theme_choices(&browser),
+                    Some(browser.icon_theme.clone()),
+                    Message::IconThemeSelected,
+                )
+                .placeholder("Icon theme")
                 .width(Length::Fill),
-            pick_list(
-                self.terminal_choices(),
-                Some(self.selected_terminal_choice(&browser)),
-                Message::TerminalChoiceSelected,
-            )
-            .width(Length::Fill),
-            text_input(
-                "Custom terminal command",
-                (self.selected_terminal_choice(&browser) == CUSTOM_TERMINAL_CHOICE)
-                    .then_some(browser.terminal_command.as_str())
-                    .unwrap_or_default(),
-            )
-            .on_input(Message::TerminalCommandChanged)
-            .width(Length::Fill),
+                self.preference_reset_button(PreferenceOption::IconTheme),
+            ],
+            row![
+                text_input("Thumbnail location", &thumbnail_location,)
+                    .on_input(Message::ThumbnailLocationChanged)
+                    .width(Length::Fill),
+                self.preference_reset_button(PreferenceOption::ThumbnailLocation),
+            ],
+            row![
+                column![
+                    pick_list(
+                        self.terminal_choices(),
+                        Some(self.selected_terminal_choice(&browser)),
+                        Message::TerminalChoiceSelected,
+                    )
+                    .width(Length::Fill),
+                    text_input(
+                        "Custom terminal command",
+                        (self.selected_terminal_choice(&browser) == CUSTOM_TERMINAL_CHOICE)
+                            .then_some(browser.terminal_command.as_str())
+                            .unwrap_or_default(),
+                    )
+                    .on_input(Message::TerminalCommandChanged)
+                    .width(Length::Fill),
+                ]
+                .spacing(8)
+                .width(Length::Fill),
+                self.preference_reset_button(PreferenceOption::Terminal),
+            ],
             button(text("Restart backend")).on_press(Message::RestartBackend),
         ]
         .spacing(10);
@@ -2527,9 +2677,18 @@ impl Gui {
                         .on_press(Message::RequestProfileReset),
                     ]
                     .spacing(8),
-                    options,
-                    self.accent_picker_button(false),
-                    self.accent_picker_button(true),
+                    row![
+                        container(options).width(Length::Fill),
+                        self.preference_reset_button(PreferenceOption::ColorMode),
+                    ],
+                    row![
+                        container(self.accent_picker_button(false)).width(Length::Fill),
+                        self.preference_reset_button(PreferenceOption::LightAccent),
+                    ],
+                    row![
+                        container(self.accent_picker_button(true)).width(Length::Fill),
+                        self.preference_reset_button(PreferenceOption::DarkAccent),
+                    ],
                 ]
                 .spacing(10),
                 column![text("Browser").size(18), browser_options].spacing(10),
@@ -2936,10 +3095,18 @@ async fn load_mounts() -> Result<MountState, String> {
         for device in output.blockdevices {
             collect_drives(device, &mut drives);
         }
-        Ok(MountState {
-            drives,
-            mounts: read_mounts()?,
-        })
+        let mut mounts = drives
+            .iter()
+            .flat_map(|drive| drive.mount_points.iter().cloned())
+            .map(|path| SystemMount {
+                path,
+                filesystem: "block".into(),
+            })
+            .collect::<Vec<_>>();
+        mounts.extend(read_remote_mounts()?);
+        mounts.sort_by(|left, right| left.path.cmp(&right.path));
+        mounts.dedup_by(|left, right| left.path == right.path);
+        Ok(MountState { drives, mounts })
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -3197,7 +3364,7 @@ fn desktop_entry_name(application: &str) -> Option<String> {
 }
 
 #[cfg(target_os = "linux")]
-fn read_mounts() -> Result<Vec<SystemMount>, String> {
+fn read_remote_mounts() -> Result<Vec<SystemMount>, String> {
     let mountinfo = fs::read_to_string("/proc/self/mountinfo")
         .map_err(|error| format!("Could not read mounted filesystems: {error}"))?;
     Ok(mountinfo
@@ -3212,34 +3379,9 @@ fn read_mounts() -> Result<Vec<SystemMount>, String> {
                 path: PathBuf::from(unescape_mount_path(mount_path)),
                 filesystem: filesystem.into(),
             };
-            (!is_system_mount(&mount)).then_some(mount)
+            (mount.filesystem == "fuse.rclone").then_some(mount)
         })
         .collect())
-}
-
-#[cfg(target_os = "linux")]
-fn is_system_mount(mount: &SystemMount) -> bool {
-    const SYSTEM_FILESYSTEMS: &[&str] = &[
-        "proc",
-        "sysfs",
-        "devtmpfs",
-        "devpts",
-        "tmpfs",
-        "cgroup",
-        "cgroup2",
-        "securityfs",
-        "pstore",
-        "tracefs",
-        "configfs",
-        "debugfs",
-        "mqueue",
-        "hugetlbfs",
-        "fusectl",
-    ];
-    SYSTEM_FILESYSTEMS.contains(&mount.filesystem.as_str())
-        || ["/proc", "/sys", "/dev", "/run"]
-            .iter()
-            .any(|path| mount.path.starts_with(path))
 }
 
 #[cfg(target_os = "linux")]
