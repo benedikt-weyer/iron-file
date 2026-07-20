@@ -1894,27 +1894,36 @@ impl Gui {
                 tooltip::Position::Bottom,
             ));
         }
-        address_bar = address_bar.push(tooltip(
-            button(icon_text(if browser_settings.show_hidden_files {
-                "eye-off"
-            } else {
-                "eye"
-            }))
-            .style(move |theme, status| {
-                if browser_settings.show_hidden_files {
-                    button::primary(theme, status)
+        let quick_actions = container(
+            row![tooltip(
+                button(icon_text(if browser_settings.show_hidden_files {
+                    "eye-off"
                 } else {
-                    button::text(theme, status)
-                }
-            })
-            .on_press(Message::ToggleHiddenFiles),
-            text(if browser_settings.show_hidden_files {
-                "Hide hidden files"
-            } else {
-                "Show hidden files"
-            }),
-            tooltip::Position::Bottom,
-        ));
+                    "eye"
+                }))
+                .style(move |theme, status| {
+                    if browser_settings.show_hidden_files {
+                        button::primary(theme, status)
+                    } else {
+                        button::text(theme, status)
+                    }
+                })
+                .on_press(Message::ToggleHiddenFiles),
+                text(if browser_settings.show_hidden_files {
+                    "Hide hidden files"
+                } else {
+                    "Show hidden files"
+                }),
+                tooltip::Position::Bottom,
+            )]
+            .spacing(8),
+        )
+        .width(Length::Fill)
+        .padding([3, 6])
+        .style(|_| {
+            iced::widget::container::Style::default()
+                .background(Color::from_rgba8(128, 128, 128, 0.12))
+        });
         address_bar = address_bar.push(tooltip(
             button(icon_text("settings")).on_press(Message::ShowPreferences),
             text(String::from("Preferences")),
@@ -2001,7 +2010,11 @@ impl Gui {
         let sidebar_panel = row![self.sidebar_view(), resize_handle]
             .spacing(0)
             .height(Length::Fill);
-        let main_content = row![sidebar_panel, browser]
+        let file_content = column![quick_actions, browser]
+            .spacing(8)
+            .width(Length::Fill)
+            .height(Length::Fill);
+        let main_content = row![sidebar_panel, file_content]
             .spacing(16)
             .width(Length::Fill)
             .height(Length::Fill);
