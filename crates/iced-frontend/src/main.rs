@@ -19,7 +19,7 @@ use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{
     browse_with_thumbnails,
     config::{BrowserLayout, BrowserSettings, ColorMode, ConfigStore, Profile, SidebarLocation},
-    copy_entries, create_symlinks, create_thumbnail, delete_entries, ensure_backend,
+    copy_entries, create_entry, create_symlinks, create_thumbnail, delete_entries, ensure_backend,
     pipe_backend_logs, proto, restart_backend, stream_directory,
 };
 use proto::{BrowseResponse, browse_response::Payload};
@@ -87,6 +87,8 @@ struct Gui {
     paste_buffer: Option<PasteBuffer>,
     pending_delete: Option<Vec<PathBuf>>,
     delete_confirm_selected: bool,
+    pending_create: Option<(PathBuf, bool)>,
+    create_entry_name: String,
     selection_anchor: Option<PathBuf>,
     modifiers: keyboard::Modifiers,
     browser_pointer: Point,
@@ -198,6 +200,14 @@ enum Message {
     SelectDeleteDialogAction(bool),
     ActivateDeleteDialogAction,
     FileDeleteFinished(Result<Vec<PathBuf>, String>),
+    RequestCreateEntry {
+        parent: PathBuf,
+        is_directory: bool,
+    },
+    CreateEntryNameChanged(String),
+    ConfirmCreateEntry,
+    CancelCreateEntry,
+    EntryCreated(Result<PathBuf, String>),
     ModifiersChanged(keyboard::Modifiers),
     StartRectangleSelection,
     RectanglePointerMoved(Point),
@@ -361,6 +371,8 @@ impl Gui {
             paste_buffer: None,
             pending_delete: None,
             delete_confirm_selected: false,
+            pending_create: None,
+            create_entry_name: String::new(),
             selection_anchor: None,
             modifiers: keyboard::Modifiers::default(),
             browser_pointer: Point::ORIGIN,
@@ -498,6 +510,51 @@ impl Gui {
                 }
                 Err(error) => {
                     self.status = format!("Delete failed: {error}");
+                    Task::none()
+                }
+            },
+            Message::RequestCreateEntry {
+                parent,
+                is_directory,
+            } => {
+                self.context_entry = None;
+                self.pending_create = Some((parent, is_directory));
+                self.create_entry_name.clear();
+                Task::none()
+            }
+            Message::CreateEntryNameChanged(name) => {
+                self.create_entry_name = name;
+                Task::none()
+            }
+            Message::ConfirmCreateEntry => {
+                let Some((parent, is_directory)) = self.pending_create.take() else {
+                    return Task::none();
+                };
+                let name = self.create_entry_name.trim().to_owned();
+                if name.is_empty() {
+                    self.pending_create = Some((parent, is_directory));
+                    self.status = "Enter a name".into();
+                    return Task::none();
+                }
+                self.status = format!("Creating {name}...");
+                Task::perform(
+                    create_entry(parent, name, is_directory),
+                    Message::EntryCreated,
+                )
+            }
+            Message::CancelCreateEntry => {
+                self.pending_create = None;
+                self.create_entry_name.clear();
+                Task::none()
+            }
+            Message::EntryCreated(result) => match result {
+                Ok(path) => {
+                    self.create_entry_name.clear();
+                    self.status = format!("Created {}", path.display());
+                    self.open_path(self.directory_path.clone())
+                }
+                Err(error) => {
+                    self.status = format!("Create failed: {error}");
                     Task::none()
                 }
             },
@@ -1695,6 +1752,18 @@ impl Gui {
                 );
             }
             if entry.is_directory {
+                actions = actions.push(button(text("Create folder")).width(Length::Fill).on_press(
+                    Message::RequestCreateEntry {
+                        parent: entry.path.clone(),
+                        is_directory: true,
+                    },
+                ));
+                actions = actions.push(button(text("Create file")).width(Length::Fill).on_press(
+                    Message::RequestCreateEntry {
+                        parent: entry.path.clone(),
+                        is_directory: false,
+                    },
+                ));
                 actions = actions.push(
                     button(text("Create symlink here"))
                         .width(Length::Fill)
@@ -1800,10 +1869,49 @@ impl Gui {
             .width(Length::Fill)
             .height(Length::Fill)
         });
+        let create_dialog = self.pending_create.as_ref().map(|(_, is_directory)| {
+            let kind = if *is_directory { "folder" } else { "file" };
+            let dialog = container(
+                column![
+                    text(format!("Create {kind}")),
+                    text_input("Name", &self.create_entry_name)
+                        .on_input(Message::CreateEntryNameChanged)
+                        .on_submit(Message::ConfirmCreateEntry),
+                    row![
+                        button(text("Cancel")).on_press(Message::CancelCreateEntry),
+                        button(text("Create")).on_press(Message::ConfirmCreateEntry),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(12),
+            )
+            .padding(16)
+            .style(|theme: &Theme| {
+                iced::widget::container::Style::default()
+                    .background(theme.palette().background)
+                    .border(Border {
+                        color: theme.palette().primary,
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    })
+            });
+            stack![
+                mouse_area(Space::new(Length::Fill, Length::Fill))
+                    .on_press(Message::CancelCreateEntry),
+                container(dialog)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+        });
 
         stack![page]
             .push_maybe(overlay)
             .push_maybe(delete_confirmation)
+            .push_maybe(create_dialog)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()

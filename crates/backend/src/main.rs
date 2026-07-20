@@ -20,9 +20,9 @@ use tokio_stream::{
 use tonic::{Request, Response, Status, transport::Server};
 
 use proto::{
-    BrowseResponse, BrowserError, DeleteEntriesRequest, Directory, FileCommandRequest,
-    FileCommandResponse, FileContent, FileEntry, ListDirectoryRequest, LogEntry, LogStreamRequest,
-    OpenPathRequest, ThumbnailRequest, ThumbnailResponse,
+    BrowseResponse, BrowserError, CreateEntryRequest, DeleteEntriesRequest, Directory,
+    FileCommandRequest, FileCommandResponse, FileContent, FileEntry, ListDirectoryRequest,
+    LogEntry, LogStreamRequest, OpenPathRequest, ThumbnailRequest, ThumbnailResponse,
     browse_response::Payload,
     file_browser_server::{FileBrowser, FileBrowserServer},
 };
@@ -185,6 +185,22 @@ impl FileBrowser for FileBrowserService {
                 .into_iter()
                 .map(|path| path.display().to_string())
                 .collect(),
+        }))
+    }
+
+    async fn create_entry(
+        &self,
+        request: Request<CreateEntryRequest>,
+    ) -> Result<Response<FileCommandResponse>, Status> {
+        let request = request.into_inner();
+        let parent = PathBuf::from(request.parent);
+        let path = create_entry(&parent, &request.name, request.is_directory).map_err(|error| {
+            self.log(format!("Creating entry failed: {error}"));
+            Status::invalid_argument(error)
+        })?;
+        self.log(format!("Created {}", path.display()));
+        Ok(Response::new(FileCommandResponse {
+            copied_paths: vec![path.display().to_string()],
         }))
     }
 
@@ -389,6 +405,33 @@ fn create_symlinks(sources: &[PathBuf], destination: &Path) -> Result<Vec<PathBu
             Ok(target)
         })
         .collect()
+}
+
+fn create_entry(parent: &Path, name: &str, is_directory: bool) -> Result<PathBuf, String> {
+    if !parent.is_dir() {
+        return Err(format!("{} is not a directory", parent.display()));
+    }
+    let name_path = Path::new(name);
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name_path.is_absolute()
+        || name_path.components().count() != 1
+    {
+        return Err("name must be a single non-empty file name".into());
+    }
+    let path = parent.join(name_path);
+    if is_directory {
+        std::fs::create_dir(&path)
+    } else {
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map(|_| ())
+    }
+    .map_err(|error| format!("could not create {}: {error}", path.display()))?;
+    Ok(path)
 }
 
 fn available_copy_path(candidate: PathBuf) -> PathBuf {
@@ -682,6 +725,27 @@ mod tests {
 
         assert_eq!(created, vec![destination.join("source.txt")]);
         assert_eq!(std::fs::read_to_string(&created[0]).unwrap(), "source");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn create_entry_creates_files_and_folders_with_safe_names() {
+        let root = std::env::temp_dir().join(format!(
+            "iron-file-create-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+
+        let file = create_entry(&root, "new.txt", false).unwrap();
+        let directory = create_entry(&root, "new-folder", true).unwrap();
+
+        assert!(file.is_file());
+        assert!(directory.is_dir());
+        assert!(create_entry(&root, "nested/name", false).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -23,8 +23,8 @@ pub mod proto {
 }
 
 use proto::{
-    DeleteEntriesRequest, FileCommandRequest, ListDirectoryRequest, LogStreamRequest,
-    OpenPathRequest, ThumbnailRequest, file_browser_client::FileBrowserClient,
+    CreateEntryRequest, DeleteEntriesRequest, FileCommandRequest, ListDirectoryRequest,
+    LogStreamRequest, OpenPathRequest, ThumbnailRequest, file_browser_client::FileBrowserClient,
 };
 
 const BACKEND_MODE_ENV: &str = "IRON_FILE_BACKEND_MODE";
@@ -175,6 +175,31 @@ pub async fn create_symlinks(
                 .into_iter()
                 .map(PathBuf::from)
                 .collect()
+        })
+        .map_err(|error| error.to_string())
+}
+
+pub async fn create_entry(
+    parent: PathBuf,
+    name: String,
+    is_directory: bool,
+) -> Result<PathBuf, String> {
+    let mut client = connect_or_start().await?;
+    client
+        .create_entry(Request::new(CreateEntryRequest {
+            parent: parent.display().to_string(),
+            name,
+            is_directory,
+        }))
+        .await
+        .map(|response| {
+            response
+                .into_inner()
+                .copied_paths
+                .into_iter()
+                .next()
+                .map(PathBuf::from)
+                .unwrap_or_default()
         })
         .map_err(|error| error.to_string())
 }

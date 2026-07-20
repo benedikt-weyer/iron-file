@@ -9,6 +9,7 @@ service FileBrowser {
   rpc CopyEntries(FileCommandRequest) returns (FileCommandResponse);
   rpc DeleteEntries(DeleteEntriesRequest) returns (FileCommandResponse);
   rpc CreateSymlinks(FileCommandRequest) returns (FileCommandResponse);
+  rpc CreateEntry(CreateEntryRequest) returns (FileCommandResponse);
   rpc StreamLogs(LogStreamRequest) returns (stream LogEntry);
 }
 
@@ -52,6 +53,12 @@ message FileCommandResponse {
 
 message DeleteEntriesRequest {
   repeated string paths = 1;
+}
+
+message CreateEntryRequest {
+  string parent = 1;
+  string name = 2;
+  bool is_directory = 3;
 }
 
 message ListDirectoryRequest {
