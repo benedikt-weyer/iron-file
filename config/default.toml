@@ -13,6 +13,7 @@ preview_enabled = false
 single_click_opens_folders = false
 terminal_command = "default"
 sidebar_width = 180
+icon_theme = "bundled"
 
 [[sidebar_locations]]
 label = "Home"

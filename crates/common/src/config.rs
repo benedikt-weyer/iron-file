@@ -70,6 +70,8 @@ pub struct BrowserSettings {
     pub terminal_command: String,
     #[serde(default = "default_sidebar_width")]
     pub sidebar_width: u16,
+    #[serde(default = "default_icon_theme")]
+    pub icon_theme: String,
 }
 
 #[derive(Debug, Clone)]
@@ -441,6 +443,10 @@ fn default_sidebar_width() -> u16 {
     default_browser_settings().sidebar_width
 }
 
+fn default_icon_theme() -> String {
+    default_browser_settings().icon_theme
+}
+
 fn default_profile_file() -> ProfileFile {
     toml::from_str(DEFAULT_PROFILE_TOML).expect("default profile must be valid TOML")
 }
@@ -580,16 +586,19 @@ mod tests {
         browser.single_click_opens_folders = true;
         browser.terminal_command = "foot".into();
         browser.sidebar_width = 240;
+        browser.icon_theme = "Papirus-Dark".into();
 
         let saved = store.save_browser_settings(&profile, browser).unwrap();
 
         assert!(saved.browser.single_click_opens_folders);
         assert_eq!(saved.browser.terminal_command, "foot");
         assert_eq!(saved.browser.sidebar_width, 240);
+        assert_eq!(saved.browser.icon_theme, "Papirus-Dark");
         let saved_toml = fs::read_to_string(&profile.path).unwrap();
         assert!(saved_toml.contains("single_click_opens_folders = true"));
         assert!(saved_toml.contains("terminal_command = \"foot\""));
         assert!(saved_toml.contains("sidebar_width = 240"));
+        assert!(saved_toml.contains("icon_theme = \"Papirus-Dark\""));
         fs::remove_dir_all(directory).unwrap();
     }
 

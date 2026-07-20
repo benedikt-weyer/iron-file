@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -9,7 +10,7 @@ use iced::{
     Border, Color, Element, Font, Length, Point, Task, Theme, mouse,
     widget::{
         Space, button, column, container, mouse_area, pick_list, radio, responsive, row,
-        scrollable, slider, stack, text, text_input, toggler, tooltip,
+        scrollable, slider, stack, svg, text, text_input, toggler, tooltip,
     },
 };
 use iconflow::{Pack, Size, Style, fonts, try_icon};
@@ -69,6 +70,8 @@ struct Gui {
     history: Vec<PathBuf>,
     history_index: Option<usize>,
     sidebar_resize: Option<(f32, u16, u16)>,
+    icon_themes: Vec<String>,
+    entry_icons: HashMap<PathBuf, Option<PathBuf>>,
 }
 
 const DEFAULT_TERMINAL_CHOICE: &str = "System default";
@@ -154,6 +157,7 @@ enum Message {
     SingleClickFoldersToggled(bool),
     TerminalChoiceSelected(String),
     TerminalCommandChanged(String),
+    IconThemeSelected(String),
     StartSidebarResize,
     FinishSidebarResize,
     ShowEntryContext {
@@ -229,6 +233,8 @@ impl Gui {
             history: Vec::new(),
             history_index: None,
             sidebar_resize: None,
+            icon_themes: available_icon_themes(),
+            entry_icons: HashMap::new(),
         }
     }
 
@@ -358,6 +364,12 @@ impl Gui {
             Message::TerminalCommandChanged(terminal_command) => {
                 let mut browser = self.active_browser_settings();
                 browser.terminal_command = terminal_command;
+                self.save_browser_settings(browser);
+                Task::none()
+            }
+            Message::IconThemeSelected(icon_theme) => {
+                let mut browser = self.active_browser_settings();
+                browser.icon_theme = icon_theme;
                 self.save_browser_settings(browser);
                 Task::none()
             }
@@ -553,6 +565,27 @@ impl Gui {
         }
     }
 
+    fn icon_theme_choices(&self, browser: &BrowserSettings) -> Vec<String> {
+        let mut themes = self.icon_themes.clone();
+        if !themes.contains(&browser.icon_theme) {
+            themes.push(browser.icon_theme.clone());
+        }
+        themes
+    }
+
+    fn refresh_entry_icons(&mut self) {
+        let icon_theme = self.active_browser_settings().icon_theme;
+        self.entry_icons = self
+            .entries
+            .iter()
+            .map(|entry| {
+                let path = PathBuf::from(&entry.path);
+                let icon = themed_entry_icon_path(&icon_theme, entry);
+                (path, icon)
+            })
+            .collect();
+    }
+
     fn handle_entry_click(&mut self, path: PathBuf, is_directory: bool) -> Task<Message> {
         let now = Instant::now();
         let is_double_click =
@@ -600,6 +633,7 @@ impl Gui {
         };
         self.active_profile = Some(path.clone());
         self.color_mode = profile.color_mode;
+        self.refresh_entry_icons();
         if let Err(error) = self.config_store.set_active_profile(&path) {
             self.status = error;
         }
@@ -668,6 +702,7 @@ impl Gui {
         }
         self.active_profile = Some(saved_path.clone());
         self.color_mode = color_mode;
+        self.refresh_entry_icons();
         if let Err(error) = self.config_store.set_active_profile(&saved_path) {
             self.status = error;
         }
@@ -799,6 +834,7 @@ impl Gui {
                 self.directory_path = PathBuf::from(response.path);
                 self.record_history(self.directory_path.clone(), history);
                 self.entries = directory.entries;
+                self.refresh_entry_icons();
                 self.content.clear();
                 self.status = format!("{} entries", self.entries.len());
             }
@@ -848,11 +884,7 @@ impl Gui {
     fn browser_view(&self) -> Element<'_, Message> {
         let browser_settings = self.active_browser_settings();
         let entries = self.entries.iter().fold(column![], |column, entry| {
-            let icon = if entry.is_directory {
-                icon_text("folder").size(browser_settings.item_size)
-            } else {
-                icon_text("file").size(browser_settings.item_size)
-            };
+            let icon = self.entry_icon(entry, browser_settings.item_size);
             let path = PathBuf::from(&entry.path);
             if entry.is_directory {
                 column.push(
@@ -900,11 +932,10 @@ impl Gui {
                         .fold(column![].spacing(8), |column, chunk| {
                             let tiles = chunk.iter().fold(row![].spacing(8), |row, entry| {
                                 let path = PathBuf::from(&entry.path);
-                                let icon = if entry.is_directory {
-                                    icon_text("folder").size(browser_settings.item_size)
-                                } else {
-                                    icon_text("file").size(browser_settings.item_size)
-                                };
+                                let icon = self.entry_icon(
+                                    entry,
+                                    browser_settings.item_size.saturating_mul(9) / 5,
+                                );
                                 let tile_content = container(
                                     column![
                                         icon,
@@ -1120,6 +1151,23 @@ impl Gui {
             .into()
     }
 
+    fn entry_icon<'a>(&self, entry: &proto::FileEntry, size: u16) -> Element<'a, Message> {
+        if let Some(path) = self
+            .entry_icons
+            .get(&PathBuf::from(&entry.path))
+            .and_then(|path| path.as_ref())
+        {
+            svg(svg::Handle::from_path(path))
+                .width(Length::Fixed(f32::from(size)))
+                .height(Length::Fixed(f32::from(size)))
+                .into()
+        } else {
+            icon_text(if entry.is_directory { "folder" } else { "file" })
+                .size(size)
+                .into()
+        }
+    }
+
     fn address_control(&self) -> Element<'_, Message> {
         if self.editing_address {
             return text_input("Path", &self.address)
@@ -1318,6 +1366,13 @@ impl Gui {
                 .label("Open folders with one click")
                 .on_toggle(Message::SingleClickFoldersToggled),
             pick_list(
+                self.icon_theme_choices(&browser),
+                Some(browser.icon_theme.clone()),
+                Message::IconThemeSelected,
+            )
+            .placeholder("Icon theme")
+            .width(Length::Fill),
+            pick_list(
                 self.terminal_choices(),
                 Some(self.selected_terminal_choice(&browser)),
                 Message::TerminalChoiceSelected,
@@ -1420,6 +1475,87 @@ fn icon_text<'a>(name: &str) -> iced::widget::Text<'a> {
     text(glyph.to_string())
         .size(18)
         .font(Font::with_name(icon.family))
+}
+
+fn available_icon_themes() -> Vec<String> {
+    let mut themes = vec!["bundled".into()];
+    #[cfg(target_os = "linux")]
+    {
+        let theme = Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", "icon-theme"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .trim_matches('\'')
+                    .to_owned()
+            })
+            .filter(|theme| !theme.is_empty());
+        if let Some(theme) = theme
+            && !themes.contains(&theme)
+        {
+            themes.push(theme);
+        }
+    }
+    themes
+}
+
+fn themed_entry_icon_path(theme: &str, entry: &proto::FileEntry) -> Option<PathBuf> {
+    if theme == "bundled" {
+        return None;
+    }
+    let icons = gio_icon_names(Path::new(&entry.path));
+    for root in icon_theme_directories(theme) {
+        for size in ["128x128", "96x96", "64x64", "48x48", "scalable"] {
+            for icon in &icons {
+                for category in ["mimetypes", "places", "actions", "status", "apps"] {
+                    let path = root.join(size).join(category).join(format!("{icon}.svg"));
+                    if path.is_file() {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn gio_icon_names(path: &Path) -> Vec<String> {
+    let Ok(output) = Command::new("gio")
+        .args(["info", "-a", "standard::icon"])
+        .arg(path)
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("standard::icon:"))
+        .map(|icons| {
+            icons
+                .split(',')
+                .map(str::trim)
+                .filter(|icon| !icon.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn icon_theme_directories(theme: &str) -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        directories.push(home.join(".nix-profile/share/icons").join(theme));
+        directories.push(home.join(".local/share/icons").join(theme));
+    }
+    directories.push(PathBuf::from("/run/current-system/sw/share/icons").join(theme));
+    directories
 }
 
 fn file_item_button_style(theme: &Theme, status: button::Status) -> button::Style {
