@@ -1,0 +1,29 @@
+#!/usr/bin/env sh
+
+cat <<'EOF'
+iron-file development commands
+
+Environment
+  nix develop              Enter the development shell.
+  direnv allow             Allow the repository .envrc; adds scripts/ to PATH.
+
+Run
+  run                      Start the default Iced frontend.
+  run-gtk                  Start the GTK4 frontend.
+  run-backend              Start the backend only.
+
+The frontends start the backend automatically when it is not already running.
+
+Cargo
+  cargo check --workspace  Type-check every workspace crate.
+  cargo test --workspace   Run the workspace tests.
+  cargo build --workspace  Build every workspace crate.
+  cargo fmt                Format Rust source files.
+  cargo fmt --check        Check Rust formatting without changing files.
+
+Nix
+  nix develop              Open the development shell without direnv.
+  nix flake check          Evaluate and check the development flake.
+
+Run this help again with: scripts/help
+EOF
