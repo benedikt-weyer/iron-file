@@ -232,6 +232,12 @@ impl Gui {
                 continue;
             }
             let action: Element<'_, Message> = match item {
+                QuickToolbarItem::Refresh => tooltip(
+                    button(icon_text("rotate-cw")).on_press(Message::RefreshDirectory),
+                    text("Refresh folder"),
+                    tooltip::Position::Bottom,
+                )
+                .into(),
                 QuickToolbarItem::ToggleHiddenFiles => tooltip(
                     button(icon_text(if browser_settings.show_hidden_files {
                         "eye-off"

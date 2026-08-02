@@ -296,6 +296,7 @@ impl fmt::Display for ContextMenuItem {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum QuickToolbarItem {
+    Refresh,
     ToggleHiddenFiles,
     Sort,
     FolderSort,
@@ -304,7 +305,8 @@ pub enum QuickToolbarItem {
 }
 
 impl QuickToolbarItem {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
+        Self::Refresh,
         Self::ToggleHiddenFiles,
         Self::Sort,
         Self::FolderSort,
@@ -381,6 +383,7 @@ pub struct KeyboardShortcut {
 impl fmt::Display for QuickToolbarItem {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::Refresh => "Refresh folder",
             Self::ToggleHiddenFiles => "Show hidden files",
             Self::Sort => "Sort entries",
             Self::FolderSort => "Override folder sorting",

@@ -458,6 +458,7 @@ enum HistoryRequest {
     Initial,
     New,
     Existing(usize),
+    Refresh,
 }
 
 #[derive(Debug, Clone)]
@@ -747,6 +748,7 @@ enum Message {
     CancelPicker,
     SaveFileNameChanged(String),
     ResetSaveFileName,
+    RefreshDirectory,
     CloseWindow(Option<window::Id>),
     RestartBackend,
     BackendRestarted(Result<(), String>),
@@ -1028,6 +1030,7 @@ impl Gui {
                 self.save_file_name = self.original_save_file_name.clone();
                 Task::none()
             }
+            Message::RefreshDirectory => self.refresh_directory(),
             Message::CloseWindow(Some(id)) => window::close(id),
             Message::CloseWindow(None) => Task::none(),
             Message::ExecuteBrowserCommand(command) => self.execute_browser_command(command),
@@ -1766,11 +1769,12 @@ impl Gui {
                 self.entry_icons
                     .insert(path.clone(), themed_entry_icon_path(&icon_theme, &entry));
                 let is_directory = entry.is_directory;
+                let thumbnail_is_loaded = self.thumbnail_handles.contains_key(&path);
                 let sort_order = self.current_sort_order();
                 self.entries.push(entry);
                 sort_entries(&mut self.entries, sort_order);
                 self.status = format!("{} entries", self.entries.len());
-                if is_directory {
+                if is_directory || thumbnail_is_loaded {
                     Task::none()
                 } else {
                     let thumbnail_directory = self.active_browser_settings().thumbnail_location;
@@ -2865,6 +2869,10 @@ impl Gui {
         )
     }
 
+    fn refresh_directory(&mut self) -> Task<Message> {
+        self.request_path(self.directory_path.clone(), HistoryRequest::Refresh)
+    }
+
     fn apply_response(
         &mut self,
         result: Result<BrowseResponse, String>,
@@ -2880,6 +2888,8 @@ impl Gui {
 
         match response.payload {
             Some(Payload::Directory(directory)) => {
+                let preserve_thumbnails = matches!(history, HistoryRequest::Refresh)
+                    && self.directory_path == PathBuf::from(&response.path);
                 self.address = response.path.clone();
                 self.directory_path = PathBuf::from(response.path);
                 self.record_history(self.directory_path.clone(), history);
@@ -2887,8 +2897,10 @@ impl Gui {
                 self.entries.clear();
                 self.selected_entries.clear();
                 self.selection_anchor = None;
-                self.thumbnail_handles.clear();
-                self.refresh_entry_icons();
+                if !preserve_thumbnails {
+                    self.thumbnail_handles.clear();
+                    self.refresh_entry_icons();
+                }
                 self.content.clear();
                 self.status = "Loading folder contents".into();
                 let directory = self.directory_path.clone();
@@ -2939,6 +2951,7 @@ impl Gui {
                 self.history_index = Some(index);
             }
             HistoryRequest::Existing(_) => self.record_history(path, HistoryRequest::New),
+            HistoryRequest::Refresh => {}
         }
     }
 

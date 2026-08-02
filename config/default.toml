@@ -47,6 +47,7 @@ folder_context_menu_items = [
   "open-terminal",
 ]
 quick_toolbar_items = [
+  "refresh",
   "toggle-hidden-files",
   "sort",
   "folder-sort",
