@@ -42,9 +42,11 @@ folder_context_menu_items = [
 ]
 quick_toolbar_items = [
   "toggle-hidden-files",
+  "sort",
   "compress-selection",
   "extract-selection",
 ]
+sort_order = "name-ascending"
 keyboard_shortcuts = [
   { action = "rename-selection", key = "F2" },
 ]

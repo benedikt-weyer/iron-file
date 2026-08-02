@@ -30,7 +30,8 @@ use iron_file_common::{
     browse_with_thumbnails, compress_entries,
     config::{
         BrowserLayout, BrowserSettings, ColorMode, ConfigStore, ContextMenuBlurKernelSize,
-        ContextMenuItem, KeyboardShortcutAction, Profile, QuickToolbarItem, SidebarLocation,
+        ContextMenuItem, EntrySortOrder, KeyboardShortcutAction, Profile, QuickToolbarItem,
+        SidebarLocation,
     },
     copy_entries, create_entry, create_symlinks, create_thumbnail, delete_entries, ensure_backend,
     extract_archives, pipe_backend_logs, proto, rename_entry, restart_backend, stream_directory,
@@ -593,6 +594,7 @@ enum Message {
     },
     QuickToolbarItemToggled(QuickToolbarItem, bool),
     MoveQuickToolbarItem(QuickToolbarItem, bool),
+    SortOrderSelected(EntrySortOrder),
     KeyboardShortcutChanged {
         action: KeyboardShortcutAction,
         key: String,
@@ -1238,6 +1240,13 @@ impl Gui {
                 }
                 Task::none()
             }
+            Message::SortOrderSelected(sort_order) => {
+                let mut browser = self.active_browser_settings();
+                browser.sort_order = sort_order;
+                sort_entries(&mut self.entries, sort_order);
+                self.save_browser_settings(browser);
+                Task::none()
+            }
             Message::KeyboardShortcutChanged { action, key } => {
                 self.save_keyboard_shortcut(action, key);
                 Task::none()
@@ -1584,8 +1593,9 @@ impl Gui {
                 self.entry_icons
                     .insert(path.clone(), themed_entry_icon_path(&icon_theme, &entry));
                 let is_directory = entry.is_directory;
+                let sort_order = self.active_browser_settings().sort_order;
                 self.entries.push(entry);
-                sort_entries(&mut self.entries);
+                sort_entries(&mut self.entries, sort_order);
                 self.status = format!("{} entries", self.entries.len());
                 if is_directory {
                     Task::none()
@@ -2899,6 +2909,13 @@ impl Gui {
                     }),
                     tooltip::Position::Bottom,
                 )
+                .into(),
+                QuickToolbarItem::Sort => pick_list(
+                    EntrySortOrder::ALL,
+                    Some(browser_settings.sort_order),
+                    Message::SortOrderSelected,
+                )
+                .width(Length::Fixed(150.0))
                 .into(),
                 QuickToolbarItem::CompressSelection => tooltip(
                     button(icon_text("archive")).on_press_maybe(has_selection.then_some(
@@ -4501,13 +4518,18 @@ fn icon_text<'a>(name: &str) -> iced::widget::Text<'a> {
         .font(Font::with_name(icon.family))
 }
 
-fn sort_entries(entries: &mut [proto::FileEntry]) {
-    entries.sort_by_key(|entry| {
-        (
-            !entry.is_directory,
-            entry.name.starts_with('.'),
-            entry.name.to_lowercase(),
-        )
+fn sort_entries(entries: &mut [proto::FileEntry], order: EntrySortOrder) {
+    entries.sort_by(|left, right| {
+        let group = (!left.is_directory, left.name.starts_with('.'))
+            .cmp(&(!right.is_directory, right.name.starts_with('.')));
+        if group.is_ne() {
+            return group;
+        }
+        let names = left.name.to_lowercase().cmp(&right.name.to_lowercase());
+        match order {
+            EntrySortOrder::NameAscending => names,
+            EntrySortOrder::NameDescending => names.reverse(),
+        }
     });
 }
 

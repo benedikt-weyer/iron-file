@@ -284,16 +284,38 @@ impl fmt::Display for ContextMenuItem {
 #[serde(rename_all = "kebab-case")]
 pub enum QuickToolbarItem {
     ToggleHiddenFiles,
+    Sort,
     CompressSelection,
     ExtractSelection,
 }
 
 impl QuickToolbarItem {
-    pub const ALL: [Self; 3] = [
+    pub const ALL: [Self; 4] = [
         Self::ToggleHiddenFiles,
+        Self::Sort,
         Self::CompressSelection,
         Self::ExtractSelection,
     ];
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EntrySortOrder {
+    NameAscending,
+    NameDescending,
+}
+
+impl EntrySortOrder {
+    pub const ALL: [Self; 2] = [Self::NameAscending, Self::NameDescending];
+}
+
+impl fmt::Display for EntrySortOrder {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::NameAscending => "Name (A-Z)",
+            Self::NameDescending => "Name (Z-A)",
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -324,6 +346,7 @@ impl fmt::Display for QuickToolbarItem {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::ToggleHiddenFiles => "Show hidden files",
+            Self::Sort => "Sort entries",
             Self::CompressSelection => "Compress selection",
             Self::ExtractSelection => "Extract selection",
         })
@@ -354,6 +377,8 @@ pub struct BrowserSettings {
     pub folder_context_menu_items: Vec<ContextMenuItem>,
     #[serde(default = "default_quick_toolbar_items")]
     pub quick_toolbar_items: Vec<QuickToolbarItem>,
+    #[serde(default = "default_entry_sort_order")]
+    pub sort_order: EntrySortOrder,
     #[serde(default = "default_keyboard_shortcuts")]
     pub keyboard_shortcuts: Vec<KeyboardShortcut>,
     #[serde(default, rename = "context_menu_items", skip_serializing)]
@@ -780,6 +805,10 @@ fn default_folder_context_menu_items() -> Vec<ContextMenuItem> {
 
 fn default_quick_toolbar_items() -> Vec<QuickToolbarItem> {
     QuickToolbarItem::ALL.to_vec()
+}
+
+fn default_entry_sort_order() -> EntrySortOrder {
+    EntrySortOrder::NameAscending
 }
 
 fn default_keyboard_shortcuts() -> Vec<KeyboardShortcut> {
