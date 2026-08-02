@@ -431,6 +431,7 @@ enum HistoryRequest {
 #[derive(Debug, Clone)]
 enum BrowserCommand {
     CopySelection,
+    CopyLocation(PathBuf),
     Paste,
     DeleteSelection,
     AddSymlinkToPasteBuffer(PathBuf),
@@ -1727,6 +1728,11 @@ impl Gui {
                 }
                 Task::none()
             }
+            BrowserCommand::CopyLocation(path) => {
+                self.context_entry = None;
+                self.status = "Copied location to the clipboard".into();
+                iced::clipboard::write(path.to_string_lossy().into_owned())
+            }
             BrowserCommand::Paste => {
                 let Some(buffer) = self.paste_buffer.clone() else {
                     self.status = "Nothing to paste".into();
@@ -2782,6 +2788,15 @@ impl Gui {
             };
             let mut actions = column![action].spacing(4);
             let mut action_count = 1_u16;
+            actions = actions.push(
+                button(row![icon_text("copy").size(16), text("Copy location")].spacing(8))
+                    .width(Length::Fill)
+                    .style(context_menu_button_style)
+                    .on_press(Message::ExecuteBrowserCommand(
+                        BrowserCommand::CopyLocation(entry.path.clone()),
+                    )),
+            );
+            action_count += 1;
             if !self.selected_entries.is_empty() {
                 actions = actions.push(
                     button(row![icon_text("copy").size(16), text("Copy selection")].spacing(8))
