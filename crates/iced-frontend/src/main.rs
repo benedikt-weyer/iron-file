@@ -3467,7 +3467,7 @@ impl Gui {
 
     fn sidebar_view(&self) -> Element<'_, Message> {
         let locations = self.active_sidebar_locations().into_iter().fold(
-            column![text("Locations").size(16)].spacing(6),
+            column![].spacing(6),
             |column, location| {
                 let is_dragging = self.dragging_sidebar_location.as_ref() == Some(&location.path);
                 let is_open = self.directory_path == location.path;
@@ -3486,19 +3486,26 @@ impl Gui {
                 )
                 .padding(8)
                 .width(Length::Fill);
-                let item = if is_open {
-                    item.style(|theme| {
-                        iced::widget::container::Style::default()
-                            .background(theme.palette().primary)
-                            .color(theme.palette().background)
-                            .border(Border {
-                                radius: border_radius().into(),
-                                ..Border::default()
-                            })
-                    })
-                } else {
-                    item
-                };
+                let item: Element<'_, Message> = stack![
+                    button(item)
+                        .padding(0)
+                        .width(Length::Fill)
+                        .style(move |theme, status| {
+                            file_item_button_style(theme, status, is_open)
+                        })
+                        .on_press(Message::SidebarPressed(location.path.clone())),
+                    mouse_area(Space::new(Length::Fill, Length::Fill))
+                        .on_press(Message::SidebarPressed(location.path.clone()))
+                        .on_release(Message::SidebarReleased(location.path.clone()))
+                        .on_right_press(Message::ShowEntryContext {
+                            path: location.path.clone(),
+                            is_directory: true,
+                        })
+                        .on_enter(Message::SidebarDragTarget(location.path.clone()))
+                        .on_exit(Message::SidebarDragTargetCleared(location.path.clone())),
+                ]
+                .width(Length::Fill)
+                .into();
                 let item: Element<'_, Message> = if is_drop_target {
                     stack![
                         item,
@@ -3515,31 +3522,26 @@ impl Gui {
                 } else {
                     item.into()
                 };
-                column.push(
-                    mouse_area(item)
-                        .on_press(Message::SidebarPressed(location.path.clone()))
-                        .on_release(Message::SidebarReleased(location.path.clone()))
-                        .on_right_press(Message::ShowEntryContext {
-                            path: location.path.clone(),
-                            is_directory: true,
-                        })
-                        .on_enter(Message::SidebarDragTarget(location.path.clone()))
-                        .on_exit(Message::SidebarDragTargetCleared(location.path)),
-                )
+                column.push(item)
             },
         );
         let mounted = self.mounts.iter().fold(
-            column![text("Mounted").size(14)].spacing(4),
+            column![text("Mounted").size(16)].spacing(4),
             |column, mount| {
                 column.push(
                     button(
-                        row![
-                            icon_text("hard-drive"),
-                            text(mount.path.display().to_string()),
-                        ]
-                        .spacing(8),
+                        container(
+                            row![
+                                icon_text("hard-drive"),
+                                text(mount.path.display().to_string()),
+                            ]
+                            .spacing(8),
+                        )
+                        .padding(8)
+                        .width(Length::Fill),
                     )
-                    .style(rounded_text_button_style)
+                    .padding(0)
+                    .style(|theme, status| file_item_button_style(theme, status, false))
                     .width(Length::Fill)
                     .on_press(Message::OpenPath(mount.path.clone())),
                 )
@@ -3550,24 +3552,31 @@ impl Gui {
             .iter()
             .filter(|drive| drive.mount_points.is_empty())
             .fold(
-                column![text("Available").size(14)].spacing(4),
+                column![text("Available").size(16)].spacing(4),
                 |column, drive| {
                     column.push(
-                        row![
-                            container(row![icon_text("hard-drive"), text(&drive.name)].spacing(8))
-                                .width(Length::Fill),
-                            tooltip(
-                                button(icon_text("plug-zap"))
-                                    .on_press(Message::MountDrive(drive.path.clone())),
-                                text("Mount drive"),
-                                tooltip::Position::Right,
-                            ),
-                        ]
-                        .spacing(4),
+                        button(
+                            container(
+                                row![
+                                    container(
+                                        row![icon_text("hard-drive"), text(&drive.name)].spacing(8)
+                                    )
+                                    .width(Length::Fill),
+                                    icon_text("play").size(16),
+                                ]
+                                .spacing(8),
+                            )
+                            .padding(8)
+                            .width(Length::Fill),
+                        )
+                        .padding(0)
+                        .style(|theme, status| file_item_button_style(theme, status, false))
+                        .width(Length::Fill)
+                        .on_press(Message::MountDrive(drive.path.clone())),
                     )
                 },
             );
-        let mounts = column![text("Mounts").size(16), mounted, unmounted].spacing(6);
+        let mounts = column![mounted, unmounted].spacing(6);
         let drop_zone_height = if self.dragging_sidebar_location.is_some() {
             20.0
         } else {
