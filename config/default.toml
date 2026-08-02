@@ -20,6 +20,19 @@ terminal_command = "default"
 sidebar_width = 180
 icon_theme = "bundled"
 thumbnail_location = "~/.cache/iron-file/thumbnails"
+context_menu_items = [
+  "create-folder",
+  "create-file",
+  "open",
+  "copy-location",
+  "copy-selection",
+  "delete-selection",
+  "paste",
+  "toggle-sidebar-location",
+  "create-symlink",
+  "add-symlink-to-paste-buffer",
+  "open-terminal",
+]
 
 [[sidebar_locations]]
 label = "Home"

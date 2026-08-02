@@ -205,6 +205,56 @@ pub enum BrowserLayout {
     Tiles,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ContextMenuItem {
+    CreateFolder,
+    CreateFile,
+    Open,
+    CopyLocation,
+    CopySelection,
+    DeleteSelection,
+    Paste,
+    ToggleSidebarLocation,
+    CreateSymlink,
+    AddSymlinkToPasteBuffer,
+    OpenTerminal,
+}
+
+impl ContextMenuItem {
+    pub const ALL: [Self; 11] = [
+        Self::CreateFolder,
+        Self::CreateFile,
+        Self::Open,
+        Self::CopyLocation,
+        Self::CopySelection,
+        Self::DeleteSelection,
+        Self::Paste,
+        Self::ToggleSidebarLocation,
+        Self::CreateSymlink,
+        Self::AddSymlinkToPasteBuffer,
+        Self::OpenTerminal,
+    ];
+}
+
+impl fmt::Display for ContextMenuItem {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::CreateFolder => "Create folder",
+            Self::CreateFile => "Create file",
+            Self::Open => "Open",
+            Self::CopyLocation => "Copy location",
+            Self::CopySelection => "Copy selection",
+            Self::DeleteSelection => "Delete selection",
+            Self::Paste => "Paste",
+            Self::ToggleSidebarLocation => "Add or remove sidebar location",
+            Self::CreateSymlink => "Create symlink",
+            Self::AddSymlinkToPasteBuffer => "Add symlink to paste buffer",
+            Self::OpenTerminal => "Open terminal",
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BrowserSettings {
     pub item_size: u16,
@@ -223,6 +273,8 @@ pub struct BrowserSettings {
     pub icon_theme: String,
     #[serde(default = "default_thumbnail_location")]
     pub thumbnail_location: PathBuf,
+    #[serde(default = "default_context_menu_items")]
+    pub context_menu_items: Vec<ContextMenuItem>,
 }
 
 #[derive(Debug, Clone)]
@@ -634,6 +686,22 @@ fn default_thumbnail_location() -> PathBuf {
     default_browser_settings().thumbnail_location
 }
 
+fn default_context_menu_items() -> Vec<ContextMenuItem> {
+    vec![
+        ContextMenuItem::CreateFolder,
+        ContextMenuItem::CreateFile,
+        ContextMenuItem::Open,
+        ContextMenuItem::CopyLocation,
+        ContextMenuItem::CopySelection,
+        ContextMenuItem::DeleteSelection,
+        ContextMenuItem::Paste,
+        ContextMenuItem::ToggleSidebarLocation,
+        ContextMenuItem::CreateSymlink,
+        ContextMenuItem::AddSymlinkToPasteBuffer,
+        ContextMenuItem::OpenTerminal,
+    ]
+}
+
 fn default_profile_file() -> ProfileFile {
     toml::from_str(DEFAULT_PROFILE_TOML).expect("default profile must be valid TOML")
 }
@@ -762,6 +830,24 @@ mod tests {
         assert_eq!(
             toml::to_string(&theme).unwrap(),
             "light_highlight = \"#111111\"\ndark_highlight = \"#222222\"\nbackground_opacity = 100\ncontext_menu_blur_strength = 2\ncontext_menu_blur_kernel_size = \"6sigma+1\"\nborder_radius = 6\n"
+        );
+    }
+
+    #[test]
+    fn reads_context_menu_items_in_configured_order() {
+        let profile: ProfileFile = toml::from_str(
+            r##"
+                [browser]
+                item_size = 32
+                layout = "list"
+                context_menu_items = ["copy-location", "create-file"]
+            "##,
+        )
+        .unwrap();
+
+        assert_eq!(
+            profile.browser.unwrap().context_menu_items,
+            vec![ContextMenuItem::CopyLocation, ContextMenuItem::CreateFile,]
         );
     }
 

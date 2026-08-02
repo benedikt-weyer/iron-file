@@ -19,8 +19,9 @@ use iced::{
     gradient::Linear,
     keyboard, mouse,
     widget::{
-        Space, button as button_style, column, container, image, mouse_area, opaque, pick_list,
-        radio, responsive, row, scrollable, slider, stack, svg, text, text_input, toggler, tooltip,
+        Space, button as button_style, checkbox, column, container, image, mouse_area, opaque,
+        pick_list, radio, responsive, row, scrollable, slider, stack, svg, text, text_input,
+        toggler, tooltip,
     },
     window,
 };
@@ -28,8 +29,8 @@ use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{
     browse_with_thumbnails, compress_entries,
     config::{
-        BrowserLayout, BrowserSettings, ColorMode, ConfigStore, ContextMenuBlurKernelSize, Profile,
-        SidebarLocation,
+        BrowserLayout, BrowserSettings, ColorMode, ConfigStore, ContextMenuBlurKernelSize,
+        ContextMenuItem, Profile, SidebarLocation,
     },
     copy_entries, create_entry, create_symlinks, create_thumbnail, delete_entries, ensure_backend,
     extract_archives, pipe_backend_logs, proto, restart_backend, stream_directory,
@@ -481,6 +482,7 @@ enum PreferenceOption {
     BackgroundOpacity,
     ContextMenuBlurStrength,
     ContextMenuBlurKernelSize,
+    ContextMenuItems,
     BorderRadius,
     Layout,
     ItemSize,
@@ -551,6 +553,8 @@ enum Message {
     BackgroundOpacityChanged(u8),
     ContextMenuBlurStrengthChanged(u8),
     ContextMenuBlurKernelSizeChanged(ContextMenuBlurKernelSize),
+    ContextMenuItemToggled(ContextMenuItem, bool),
+    MoveContextMenuItem(ContextMenuItem, bool),
     BorderRadiusChanged(u8),
     OpenAccentPicker(bool),
     AccentHueChanged(u16),
@@ -1033,6 +1037,36 @@ impl Gui {
                 self.save_context_menu_blur_kernel_size(kernel_size);
                 Task::none()
             }
+            Message::ContextMenuItemToggled(item, enabled) => {
+                let mut items = self.active_browser_settings().context_menu_items;
+                if enabled {
+                    if !items.contains(&item) {
+                        items.push(item);
+                    }
+                } else {
+                    items.retain(|configured_item| *configured_item != item);
+                }
+                self.save_context_menu_items(items);
+                Task::none()
+            }
+            Message::MoveContextMenuItem(item, move_up) => {
+                let mut items = self.active_browser_settings().context_menu_items;
+                if let Some(index) = items
+                    .iter()
+                    .position(|configured_item| *configured_item == item)
+                {
+                    let target = if move_up {
+                        index.checked_sub(1)
+                    } else {
+                        (index + 1 < items.len()).then_some(index + 1)
+                    };
+                    if let Some(target) = target {
+                        items.swap(index, target);
+                        self.save_context_menu_items(items);
+                    }
+                }
+                Task::none()
+            }
             Message::BorderRadiusChanged(radius) => {
                 self.save_border_radius(radius);
                 Task::none()
@@ -1497,6 +1531,9 @@ impl Gui {
             }
             PreferenceOption::Terminal => {
                 browser.terminal_command == browser_defaults.terminal_command
+            }
+            PreferenceOption::ContextMenuItems => {
+                browser.context_menu_items == browser_defaults.context_menu_items
             }
         }
     }
@@ -1972,7 +2009,8 @@ impl Gui {
             | PreferenceOption::SingleClickFolders
             | PreferenceOption::IconTheme
             | PreferenceOption::ThumbnailLocation
-            | PreferenceOption::Terminal => {
+            | PreferenceOption::Terminal
+            | PreferenceOption::ContextMenuItems => {
                 let mut browser = self.active_browser_settings();
                 match option {
                     PreferenceOption::Layout => browser.layout = defaults.layout,
@@ -1987,6 +2025,9 @@ impl Gui {
                     }
                     PreferenceOption::Terminal => {
                         browser.terminal_command = defaults.terminal_command
+                    }
+                    PreferenceOption::ContextMenuItems => {
+                        browser.context_menu_items = defaults.context_menu_items
                     }
                     _ => unreachable!(),
                 }
@@ -2091,6 +2132,20 @@ impl Gui {
             Ok(saved_profile) => self.apply_saved_profile(saved_profile),
             Err(error) => self.status = error,
         }
+    }
+
+    fn save_context_menu_items(&mut self, items: Vec<ContextMenuItem>) {
+        let Some(path) = self.active_profile.clone() else {
+            self.status = "No active configuration profile".into();
+            return;
+        };
+        let Some(profile) = self.profiles.iter().find(|profile| profile.path == path) else {
+            self.status = "The active configuration profile is unavailable".into();
+            return;
+        };
+        let mut browser = profile.browser.clone();
+        browser.context_menu_items = items;
+        self.save_browser_settings(browser);
     }
 
     fn save_sidebar_locations(&mut self, sidebar_locations: Vec<SidebarLocation>) {
@@ -2737,150 +2792,170 @@ impl Gui {
             .width(Length::Fill)
             .height(Length::Fill);
         let overlay = self.context_entry.as_ref().map(|entry| {
-            let action: Element<'_, Message> = if entry.is_directory {
-                let is_in_sidebar = self
-                    .active_sidebar_locations()
-                    .iter()
-                    .any(|location| location.path == entry.path);
-                if is_in_sidebar {
-                    button(
-                        row![
-                            icon_text("folder-minus").size(16),
-                            text("Remove from sidebar")
-                        ]
-                        .spacing(8),
-                    )
-                    .width(Length::Fill)
-                    .style(context_menu_button_style)
-                    .on_press(Message::RemoveContextFolderFromSidebar)
-                    .into()
-                } else {
-                    button(
-                        row![icon_text("folder-plus").size(16), text("Add to sidebar")].spacing(8),
-                    )
-                    .width(Length::Fill)
-                    .style(context_menu_button_style)
-                    .on_press(Message::AddContextFolderToSidebar)
-                    .into()
+            let is_in_sidebar = self
+                .active_sidebar_locations()
+                .iter()
+                .any(|location| location.path == entry.path);
+            let mut actions = column![].spacing(4);
+            let mut action_count = 0_u16;
+            let mut rendered_items = HashSet::new();
+            for item in &browser_settings.context_menu_items {
+                if !rendered_items.insert(*item) {
+                    continue;
                 }
-            } else {
-                match &entry.opener {
-                    Some(Ok(application)) => button(
-                        row![
-                            icon_text("external-link").size(16),
-                            text(format!("Open (with {application})"))
-                        ]
-                        .spacing(8),
-                    )
-                    .width(Length::Fill)
-                    .style(context_menu_button_style)
-                    .on_press(Message::OpenContextFile)
-                    .into(),
-                    Some(Err(_)) => {
-                        button(row![icon_text("external-link").size(16), text("Open")].spacing(8))
-                            .width(Length::Fill)
-                            .style(context_menu_button_style)
-                            .on_press(Message::OpenContextFile)
-                            .into()
-                    }
-                    None => text("Finding default application...").into(),
-                }
-            };
-            let mut actions = column![action].spacing(4);
-            let mut action_count = 1_u16;
-            actions = actions.push(
-                button(row![icon_text("copy").size(16), text("Copy location")].spacing(8))
-                    .width(Length::Fill)
-                    .style(context_menu_button_style)
-                    .on_press(Message::ExecuteBrowserCommand(
-                        BrowserCommand::CopyLocation(entry.path.clone()),
-                    )),
-            );
-            action_count += 1;
-            if !self.selected_entries.is_empty() {
-                actions = actions.push(
-                    button(row![icon_text("copy").size(16), text("Copy selection")].spacing(8))
+                let action: Option<Element<'_, Message>> = match item {
+                    ContextMenuItem::CreateFolder if entry.is_directory => Some(
+                        button(
+                            row![icon_text("folder-plus").size(16), text("Create folder")]
+                                .spacing(8),
+                        )
                         .width(Length::Fill)
                         .style(context_menu_button_style)
-                        .on_press(Message::ExecuteBrowserCommand(
-                            BrowserCommand::CopySelection,
-                        )),
-                );
-                actions = actions.push(
-                    button(
-                        row![icon_text("trash-2").size(16), text("Delete selection")].spacing(8),
-                    )
-                    .width(Length::Fill)
-                    .style(context_menu_button_style)
-                    .on_press(Message::ExecuteBrowserCommand(
-                        BrowserCommand::DeleteSelection,
-                    )),
-                );
-                action_count += 2;
-            }
-            if self.paste_buffer.is_some() {
-                actions = actions.push(
-                    button(row![icon_text("clipboard-paste").size(16), text("Paste")].spacing(8))
-                        .width(Length::Fill)
-                        .style(context_menu_button_style)
-                        .on_press(Message::ExecuteBrowserCommand(BrowserCommand::Paste)),
-                );
-                action_count += 1;
-            }
-            if entry.is_directory {
-                actions = actions.push(
-                    button(
-                        row![icon_text("folder-plus").size(16), text("Create folder")].spacing(8),
-                    )
-                    .width(Length::Fill)
-                    .style(context_menu_button_style)
-                    .on_press(Message::RequestCreateEntry {
-                        parent: entry.path.clone(),
-                        is_directory: true,
-                    }),
-                );
-                actions = actions.push(
-                    button(row![icon_text("file-plus").size(16), text("Create file")].spacing(8))
+                        .on_press(Message::RequestCreateEntry {
+                            parent: entry.path.clone(),
+                            is_directory: true,
+                        })
+                        .into(),
+                    ),
+                    ContextMenuItem::CreateFile if entry.is_directory => Some(
+                        button(
+                            row![icon_text("file-plus").size(16), text("Create file")].spacing(8),
+                        )
                         .width(Length::Fill)
                         .style(context_menu_button_style)
                         .on_press(Message::RequestCreateEntry {
                             parent: entry.path.clone(),
                             is_directory: false,
-                        }),
-                );
-                actions = actions.push(
-                    button(
-                        row![icon_text("link").size(16), text("Create symlink here")].spacing(8),
-                    )
-                    .width(Length::Fill)
-                    .style(context_menu_button_style)
-                    .on_press(Message::ExecuteBrowserCommand(
-                        BrowserCommand::CreateSymlinksHere(entry.path.clone()),
-                    )),
-                );
-                actions = actions.push(
-                    button(
-                        row![
-                            icon_text("link").size(16),
-                            text("Add symlink to paste buffer")
-                        ]
-                        .spacing(8),
-                    )
-                    .width(Length::Fill)
-                    .style(context_menu_button_style)
-                    .on_press(Message::ExecuteBrowserCommand(
-                        BrowserCommand::AddSymlinkToPasteBuffer(entry.path.clone()),
-                    )),
-                );
-                actions = actions.push(
-                    button(
-                        row![icon_text("terminal").size(16), text("Open terminal here")].spacing(8),
-                    )
-                    .width(Length::Fill)
-                    .style(context_menu_button_style)
-                    .on_press(Message::OpenTerminalHere),
-                );
-                action_count += 5;
+                        })
+                        .into(),
+                    ),
+                    ContextMenuItem::Open if !entry.is_directory => Some(match &entry.opener {
+                        Some(Ok(application)) => button(
+                            row![
+                                icon_text("external-link").size(16),
+                                text(format!("Open (with {application})"))
+                            ]
+                            .spacing(8),
+                        )
+                        .width(Length::Fill)
+                        .style(context_menu_button_style)
+                        .on_press(Message::OpenContextFile)
+                        .into(),
+                        Some(Err(_)) => button(
+                            row![icon_text("external-link").size(16), text("Open")].spacing(8),
+                        )
+                        .width(Length::Fill)
+                        .style(context_menu_button_style)
+                        .on_press(Message::OpenContextFile)
+                        .into(),
+                        None => text("Finding default application...").into(),
+                    }),
+                    ContextMenuItem::CopyLocation => Some(
+                        button(row![icon_text("copy").size(16), text("Copy location")].spacing(8))
+                            .width(Length::Fill)
+                            .style(context_menu_button_style)
+                            .on_press(Message::ExecuteBrowserCommand(
+                                BrowserCommand::CopyLocation(entry.path.clone()),
+                            ))
+                            .into(),
+                    ),
+                    ContextMenuItem::CopySelection if !self.selected_entries.is_empty() => Some(
+                        button(row![icon_text("copy").size(16), text("Copy selection")].spacing(8))
+                            .width(Length::Fill)
+                            .style(context_menu_button_style)
+                            .on_press(Message::ExecuteBrowserCommand(
+                                BrowserCommand::CopySelection,
+                            ))
+                            .into(),
+                    ),
+                    ContextMenuItem::DeleteSelection if !self.selected_entries.is_empty() => Some(
+                        button(
+                            row![icon_text("trash-2").size(16), text("Delete selection")]
+                                .spacing(8),
+                        )
+                        .width(Length::Fill)
+                        .style(context_menu_button_style)
+                        .on_press(Message::ExecuteBrowserCommand(
+                            BrowserCommand::DeleteSelection,
+                        ))
+                        .into(),
+                    ),
+                    ContextMenuItem::Paste if self.paste_buffer.is_some() => Some(
+                        button(
+                            row![icon_text("clipboard-paste").size(16), text("Paste")].spacing(8),
+                        )
+                        .width(Length::Fill)
+                        .style(context_menu_button_style)
+                        .on_press(Message::ExecuteBrowserCommand(BrowserCommand::Paste))
+                        .into(),
+                    ),
+                    ContextMenuItem::ToggleSidebarLocation if entry.is_directory => {
+                        Some(if is_in_sidebar {
+                            button(
+                                row![
+                                    icon_text("folder-minus").size(16),
+                                    text("Remove from sidebar")
+                                ]
+                                .spacing(8),
+                            )
+                            .width(Length::Fill)
+                            .style(context_menu_button_style)
+                            .on_press(Message::RemoveContextFolderFromSidebar)
+                            .into()
+                        } else {
+                            button(
+                                row![icon_text("folder-plus").size(16), text("Add to sidebar")]
+                                    .spacing(8),
+                            )
+                            .width(Length::Fill)
+                            .style(context_menu_button_style)
+                            .on_press(Message::AddContextFolderToSidebar)
+                            .into()
+                        })
+                    }
+                    ContextMenuItem::CreateSymlink if entry.is_directory => Some(
+                        button(
+                            row![icon_text("link").size(16), text("Create symlink here")]
+                                .spacing(8),
+                        )
+                        .width(Length::Fill)
+                        .style(context_menu_button_style)
+                        .on_press(Message::ExecuteBrowserCommand(
+                            BrowserCommand::CreateSymlinksHere(entry.path.clone()),
+                        ))
+                        .into(),
+                    ),
+                    ContextMenuItem::AddSymlinkToPasteBuffer if entry.is_directory => Some(
+                        button(
+                            row![
+                                icon_text("link").size(16),
+                                text("Add symlink to paste buffer")
+                            ]
+                            .spacing(8),
+                        )
+                        .width(Length::Fill)
+                        .style(context_menu_button_style)
+                        .on_press(Message::ExecuteBrowserCommand(
+                            BrowserCommand::AddSymlinkToPasteBuffer(entry.path.clone()),
+                        ))
+                        .into(),
+                    ),
+                    ContextMenuItem::OpenTerminal if entry.is_directory => Some(
+                        button(
+                            row![icon_text("terminal").size(16), text("Open terminal here")]
+                                .spacing(8),
+                        )
+                        .width(Length::Fill)
+                        .style(context_menu_button_style)
+                        .on_press(Message::OpenTerminalHere)
+                        .into(),
+                    ),
+                    _ => None,
+                };
+                if let Some(action) = action {
+                    actions = actions.push(action);
+                    action_count += 1;
+                }
             }
             let theme_settings = self.active_theme_settings();
             let context_menu_blur_strength = if theme_settings.background_opacity < 100 {
@@ -3527,6 +3602,53 @@ impl Gui {
             button(text("Restart backend")).on_press(Message::RestartBackend),
         ]
         .spacing(10);
+        let mut configured_context_menu_items = Vec::new();
+        for item in &browser.context_menu_items {
+            if !configured_context_menu_items.contains(item) {
+                configured_context_menu_items.push(*item);
+            }
+        }
+        let configured_context_menu_item_count = configured_context_menu_items.len();
+        let mut context_menu_items = configured_context_menu_items.clone();
+        for item in ContextMenuItem::ALL {
+            if !context_menu_items.contains(&item) {
+                context_menu_items.push(item);
+            }
+        }
+        let context_menu_options = context_menu_items.into_iter().enumerate().fold(
+            column![].spacing(6),
+            |column, (index, item)| {
+                let enabled = index < configured_context_menu_item_count;
+                let move_up = enabled
+                    .then_some(index > 0)
+                    .filter(|can_move| *can_move)
+                    .map(|_| Message::MoveContextMenuItem(item, true));
+                let move_down = enabled
+                    .then_some(index + 1 < configured_context_menu_item_count)
+                    .filter(|can_move| *can_move)
+                    .map(|_| Message::MoveContextMenuItem(item, false));
+                column.push(
+                    row![
+                        checkbox(item.to_string(), enabled)
+                            .on_toggle(move |enabled| Message::ContextMenuItemToggled(
+                                item, enabled
+                            ))
+                            .width(Length::Fill),
+                        tooltip(
+                            button(icon_text("chevron-up")).on_press_maybe(move_up),
+                            text("Move up"),
+                            tooltip::Position::Bottom,
+                        ),
+                        tooltip(
+                            button(icon_text("chevron-down")).on_press_maybe(move_down),
+                            text("Move down"),
+                            tooltip::Position::Bottom,
+                        ),
+                    ]
+                    .spacing(6),
+                )
+            },
+        );
         let profiles = self
             .profiles
             .iter()
@@ -3576,7 +3698,7 @@ impl Gui {
                 column.push(text(path.display().to_string()))
             });
 
-        let page = container(
+        let page = container(scrollable(
             column![
                 row![back_button, text("Preferences").size(24)].spacing(12),
                 column![text("Profiles").size(18), profiles, create_profile].spacing(10),
@@ -3652,12 +3774,21 @@ impl Gui {
                 ]
                 .spacing(10),
                 column![text("Browser").size(18), browser_options].spacing(10),
+                column![
+                    row![
+                        text("Context menu").size(18),
+                        self.preference_reset_button(PreferenceOption::ContextMenuItems),
+                    ]
+                    .spacing(8),
+                    context_menu_options,
+                ]
+                .spacing(10),
                 column![text("Configuration search paths").size(18), search_paths].spacing(10),
             ]
             .spacing(28)
             .padding(16)
             .width(Length::Fill),
-        )
+        ))
         .width(Length::Fill)
         .height(Length::Fill);
         let reset_confirmation = self.pending_profile_reset.then(|| {

@@ -20,3 +20,13 @@ is below `100`. The defaults are sigma `2` and `"6sigma+1"`.
 The `patches/iced-wgpu-native-backdrop-blur.patch` renderer patch exposes the
 native frame snapshot required for the context-menu backdrop shader. Iron File
 vendors and enables that patch through its Cargo workspace override.
+
+## Context menu
+
+The `[browser]` `context_menu_items` array controls both the visible actions and
+their order. Omit an item to hide it. The default puts `"create-folder"` and
+`"create-file"` first. Available values are `"create-folder"`, `"create-file"`,
+`"open"`, `"copy-location"`, `"copy-selection"`, `"delete-selection"`,
+`"paste"`, `"toggle-sidebar-location"`, `"create-symlink"`,
+`"add-symlink-to-paste-buffer"`, and `"open-terminal"`. Actions that do not
+apply to the selected file or folder are hidden automatically.
