@@ -19,8 +19,8 @@ use iced::{
     gradient::Linear,
     keyboard, mouse,
     widget::{
-        Space, button as button_style, column, container, image, mouse_area, pick_list, radio,
-        responsive, row, scrollable, slider, stack, svg, text, text_input, toggler, tooltip,
+        Space, button as button_style, column, container, image, mouse_area, opaque, pick_list,
+        radio, responsive, row, scrollable, slider, stack, svg, text, text_input, toggler, tooltip,
     },
     window,
 };
@@ -2876,27 +2876,29 @@ impl Gui {
             let context_menu_blur_kernel_size = theme_settings
                 .context_menu_blur_kernel_size
                 .effective_size(context_menu_blur_strength);
-            let menu = container(actions)
-                .width(Length::Fixed(240.0))
-                .padding(8)
-                .style(move |theme: &Theme| {
-                    iced::widget::container::Style::default()
-                        .background(theme.palette().background)
-                        .border(Border {
-                            color: Color::from_rgba8(128, 128, 128, 0.45),
-                            width: 1.0,
-                            radius: border_radius().into(),
-                        })
-                        .shadow(Shadow {
-                            color: Color::BLACK.scale_alpha(
-                                (context_menu_blur_strength > 0)
-                                    .then_some(0.35)
-                                    .unwrap_or(0.0),
-                            ),
-                            offset: Vector::new(0.0, 3.0),
-                            blur_radius: f32::from(context_menu_blur_strength),
-                        })
-                });
+            let menu = opaque(
+                container(actions)
+                    .width(Length::Fixed(240.0))
+                    .padding(8)
+                    .style(move |theme: &Theme| {
+                        iced::widget::container::Style::default()
+                            .background(theme.palette().background)
+                            .border(Border {
+                                color: Color::from_rgba8(128, 128, 128, 0.45),
+                                width: 1.0,
+                                radius: border_radius().into(),
+                            })
+                            .shadow(Shadow {
+                                color: Color::BLACK.scale_alpha(
+                                    (context_menu_blur_strength > 0)
+                                        .then_some(0.35)
+                                        .unwrap_or(0.0),
+                                ),
+                                offset: Vector::new(0.0, 3.0),
+                                blur_radius: f32::from(context_menu_blur_strength),
+                            })
+                    }),
+            );
             let menu_position = container(column![
                 Space::with_height(self.context_position.y),
                 row![Space::with_width(self.context_position.x), menu],
