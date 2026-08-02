@@ -275,6 +275,32 @@ impl fmt::Display for ContextMenuItem {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum QuickToolbarItem {
+    ToggleHiddenFiles,
+    CompressSelection,
+    ExtractSelection,
+}
+
+impl QuickToolbarItem {
+    pub const ALL: [Self; 3] = [
+        Self::ToggleHiddenFiles,
+        Self::CompressSelection,
+        Self::ExtractSelection,
+    ];
+}
+
+impl fmt::Display for QuickToolbarItem {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::ToggleHiddenFiles => "Show hidden files",
+            Self::CompressSelection => "Compress selection",
+            Self::ExtractSelection => "Extract selection",
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BrowserSettings {
     pub item_size: u16,
@@ -297,6 +323,8 @@ pub struct BrowserSettings {
     pub file_context_menu_items: Vec<ContextMenuItem>,
     #[serde(default = "default_folder_context_menu_items")]
     pub folder_context_menu_items: Vec<ContextMenuItem>,
+    #[serde(default = "default_quick_toolbar_items")]
+    pub quick_toolbar_items: Vec<QuickToolbarItem>,
     #[serde(default, rename = "context_menu_items", skip_serializing)]
     legacy_context_menu_items: Option<Vec<ContextMenuItem>>,
 }
@@ -719,6 +747,10 @@ fn default_folder_context_menu_items() -> Vec<ContextMenuItem> {
     ContextMenuItem::FOLDER_OPTIONS.to_vec()
 }
 
+fn default_quick_toolbar_items() -> Vec<QuickToolbarItem> {
+    QuickToolbarItem::ALL.to_vec()
+}
+
 impl BrowserSettings {
     fn apply_legacy_context_menu_items(&mut self) {
         let Some(items) = self.legacy_context_menu_items.take() else {
@@ -877,6 +909,27 @@ mod tests {
         let expected = vec![ContextMenuItem::CopyLocation, ContextMenuItem::CreateFile];
         assert_eq!(browser.file_context_menu_items, expected);
         assert_eq!(browser.folder_context_menu_items, expected);
+    }
+
+    #[test]
+    fn reads_quick_toolbar_items_in_configured_order() {
+        let profile: ProfileFile = toml::from_str(
+            r##"
+                [browser]
+                item_size = 32
+                layout = "list"
+                quick_toolbar_items = ["extract-selection", "toggle-hidden-files"]
+            "##,
+        )
+        .unwrap();
+
+        assert_eq!(
+            profile.browser.unwrap().quick_toolbar_items,
+            vec![
+                QuickToolbarItem::ExtractSelection,
+                QuickToolbarItem::ToggleHiddenFiles,
+            ]
+        );
     }
 
     #[test]

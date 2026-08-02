@@ -38,6 +38,11 @@ folder_context_menu_items = [
   "add-symlink-to-paste-buffer",
   "open-terminal",
 ]
+quick_toolbar_items = [
+  "toggle-hidden-files",
+  "compress-selection",
+  "extract-selection",
+]
 
 [[sidebar_locations]]
 label = "Home"

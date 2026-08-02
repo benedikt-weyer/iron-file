@@ -32,3 +32,7 @@ Available values are `"create-folder"`, `"create-file"`, `"open"`,
 `"add-symlink-to-paste-buffer"`, and `"open-terminal"`. Actions that do not
 apply to the selected file or folder are hidden automatically. The legacy
 `context_menu_items` setting is read as the initial list for both menus.
+
+The `[browser]` `quick_toolbar_items` array controls the visible quick-toolbar
+actions and their order. Available values are `"toggle-hidden-files"`,
+`"compress-selection"`, and `"extract-selection"`.

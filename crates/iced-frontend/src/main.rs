@@ -30,7 +30,7 @@ use iron_file_common::{
     browse_with_thumbnails, compress_entries,
     config::{
         BrowserLayout, BrowserSettings, ColorMode, ConfigStore, ContextMenuBlurKernelSize,
-        ContextMenuItem, Profile, SidebarLocation,
+        ContextMenuItem, Profile, QuickToolbarItem, SidebarLocation,
     },
     copy_entries, create_entry, create_symlinks, create_thumbnail, delete_entries, ensure_backend,
     extract_archives, pipe_backend_logs, proto, restart_backend, stream_directory,
@@ -484,6 +484,7 @@ enum PreferenceOption {
     ContextMenuBlurKernelSize,
     FileContextMenuItems,
     FolderContextMenuItems,
+    QuickToolbarItems,
     BorderRadius,
     Layout,
     ItemSize,
@@ -564,6 +565,8 @@ enum Message {
         is_directory: bool,
         move_up: bool,
     },
+    QuickToolbarItemToggled(QuickToolbarItem, bool),
+    MoveQuickToolbarItem(QuickToolbarItem, bool),
     BorderRadiusChanged(u8),
     OpenAccentPicker(bool),
     AccentHueChanged(u16),
@@ -1094,6 +1097,36 @@ impl Gui {
                 }
                 Task::none()
             }
+            Message::QuickToolbarItemToggled(item, enabled) => {
+                let mut items = self.active_browser_settings().quick_toolbar_items;
+                if enabled {
+                    if !items.contains(&item) {
+                        items.push(item);
+                    }
+                } else {
+                    items.retain(|configured_item| *configured_item != item);
+                }
+                self.save_quick_toolbar_items(items);
+                Task::none()
+            }
+            Message::MoveQuickToolbarItem(item, move_up) => {
+                let mut items = self.active_browser_settings().quick_toolbar_items;
+                if let Some(index) = items
+                    .iter()
+                    .position(|configured_item| *configured_item == item)
+                {
+                    let target = if move_up {
+                        index.checked_sub(1)
+                    } else {
+                        (index + 1 < items.len()).then_some(index + 1)
+                    };
+                    if let Some(target) = target {
+                        items.swap(index, target);
+                        self.save_quick_toolbar_items(items);
+                    }
+                }
+                Task::none()
+            }
             Message::BorderRadiusChanged(radius) => {
                 self.save_border_radius(radius);
                 Task::none()
@@ -1564,6 +1597,9 @@ impl Gui {
             }
             PreferenceOption::FolderContextMenuItems => {
                 browser.folder_context_menu_items == browser_defaults.folder_context_menu_items
+            }
+            PreferenceOption::QuickToolbarItems => {
+                browser.quick_toolbar_items == browser_defaults.quick_toolbar_items
             }
         }
     }
@@ -2041,7 +2077,8 @@ impl Gui {
             | PreferenceOption::ThumbnailLocation
             | PreferenceOption::Terminal
             | PreferenceOption::FileContextMenuItems
-            | PreferenceOption::FolderContextMenuItems => {
+            | PreferenceOption::FolderContextMenuItems
+            | PreferenceOption::QuickToolbarItems => {
                 let mut browser = self.active_browser_settings();
                 match option {
                     PreferenceOption::Layout => browser.layout = defaults.layout,
@@ -2062,6 +2099,9 @@ impl Gui {
                     }
                     PreferenceOption::FolderContextMenuItems => {
                         browser.folder_context_menu_items = defaults.folder_context_menu_items
+                    }
+                    PreferenceOption::QuickToolbarItems => {
+                        browser.quick_toolbar_items = defaults.quick_toolbar_items
                     }
                     _ => unreachable!(),
                 }
@@ -2183,6 +2223,20 @@ impl Gui {
         } else {
             browser.file_context_menu_items = items;
         }
+        self.save_browser_settings(browser);
+    }
+
+    fn save_quick_toolbar_items(&mut self, items: Vec<QuickToolbarItem>) {
+        let Some(path) = self.active_profile.clone() else {
+            self.status = "No active configuration profile".into();
+            return;
+        };
+        let Some(profile) = self.profiles.iter().find(|profile| profile.path == path) else {
+            self.status = "The active configuration profile is unavailable".into();
+            return;
+        };
+        let mut browser = profile.browser.clone();
+        browser.quick_toolbar_items = items;
         self.save_browser_settings(browser);
     }
 
@@ -2601,9 +2655,14 @@ impl Gui {
             ));
         }
         let has_selection = !self.selected_entries.is_empty();
-        let quick_actions = container(
-            row![
-                tooltip(
+        let mut quick_toolbar_actions = row![].spacing(8);
+        let mut rendered_quick_toolbar_items = HashSet::new();
+        for item in &browser_settings.quick_toolbar_items {
+            if !rendered_quick_toolbar_items.insert(*item) {
+                continue;
+            }
+            let action: Element<'_, Message> = match item {
+                QuickToolbarItem::ToggleHiddenFiles => tooltip(
                     button(icon_text(if browser_settings.show_hidden_files {
                         "eye-off"
                     } else {
@@ -2623,34 +2682,38 @@ impl Gui {
                         "Show hidden files"
                     }),
                     tooltip::Position::Bottom,
-                ),
-                tooltip(
+                )
+                .into(),
+                QuickToolbarItem::CompressSelection => tooltip(
                     button(icon_text("archive")).on_press_maybe(has_selection.then_some(
-                        Message::ExecuteBrowserCommand(BrowserCommand::CompressSelection,)
+                        Message::ExecuteBrowserCommand(BrowserCommand::CompressSelection),
                     )),
                     text("Compress selection"),
                     tooltip::Position::Bottom,
-                ),
-                tooltip(
+                )
+                .into(),
+                QuickToolbarItem::ExtractSelection => tooltip(
                     button(icon_text("archive-restore")).on_press_maybe(has_selection.then_some(
-                        Message::ExecuteBrowserCommand(BrowserCommand::ExtractSelection,)
+                        Message::ExecuteBrowserCommand(BrowserCommand::ExtractSelection),
                     )),
                     text("Extract selected ZIP archives"),
                     tooltip::Position::Bottom,
-                ),
-            ]
-            .spacing(8),
-        )
-        .width(Length::Fill)
-        .padding([3, 6])
-        .style(|_| {
-            iced::widget::container::Style::default()
-                .background(Color::from_rgba8(128, 128, 128, 0.12))
-                .border(Border {
-                    radius: border_radius().into(),
-                    ..Border::default()
-                })
-        });
+                )
+                .into(),
+            };
+            quick_toolbar_actions = quick_toolbar_actions.push(action);
+        }
+        let quick_actions = container(quick_toolbar_actions)
+            .width(Length::Fill)
+            .padding([3, 6])
+            .style(|_| {
+                iced::widget::container::Style::default()
+                    .background(Color::from_rgba8(128, 128, 128, 0.12))
+                    .border(Border {
+                        radius: border_radius().into(),
+                        ..Border::default()
+                    })
+            });
         let save_name_input = self.save_file_name.as_ref().map(|name| {
             let reset = self
                 .original_save_file_name
@@ -3716,6 +3779,53 @@ impl Gui {
             &ContextMenuItem::FOLDER_OPTIONS,
             true,
         );
+        let mut configured_quick_toolbar_items = Vec::new();
+        for item in &browser.quick_toolbar_items {
+            if !configured_quick_toolbar_items.contains(item) {
+                configured_quick_toolbar_items.push(*item);
+            }
+        }
+        let configured_quick_toolbar_item_count = configured_quick_toolbar_items.len();
+        let mut quick_toolbar_items = configured_quick_toolbar_items.clone();
+        for item in QuickToolbarItem::ALL {
+            if !quick_toolbar_items.contains(&item) {
+                quick_toolbar_items.push(item);
+            }
+        }
+        let quick_toolbar_options = quick_toolbar_items.into_iter().enumerate().fold(
+            column![].spacing(6),
+            |column, (index, item)| {
+                let enabled = index < configured_quick_toolbar_item_count;
+                let move_up = enabled
+                    .then_some(index > 0)
+                    .filter(|can_move| *can_move)
+                    .map(|_| Message::MoveQuickToolbarItem(item, true));
+                let move_down = enabled
+                    .then_some(index + 1 < configured_quick_toolbar_item_count)
+                    .filter(|can_move| *can_move)
+                    .map(|_| Message::MoveQuickToolbarItem(item, false));
+                column.push(
+                    row![
+                        checkbox(item.to_string(), enabled)
+                            .on_toggle(move |enabled| {
+                                Message::QuickToolbarItemToggled(item, enabled)
+                            })
+                            .width(Length::Fill),
+                        tooltip(
+                            button(icon_text("chevron-up")).on_press_maybe(move_up),
+                            text("Move up"),
+                            tooltip::Position::Bottom,
+                        ),
+                        tooltip(
+                            button(icon_text("chevron-down")).on_press_maybe(move_down),
+                            text("Move down"),
+                            tooltip::Position::Bottom,
+                        ),
+                    ]
+                    .spacing(6),
+                )
+            },
+        );
         let profiles = self
             .profiles
             .iter()
@@ -3857,6 +3967,15 @@ impl Gui {
                     ]
                     .spacing(8),
                     folder_context_menu_options,
+                ]
+                .spacing(10),
+                column![
+                    row![
+                        text("Quick toolbar").size(18),
+                        self.preference_reset_button(PreferenceOption::QuickToolbarItems),
+                    ]
+                    .spacing(8),
+                    quick_toolbar_options,
                 ]
                 .spacing(10),
                 column![text("Configuration search paths").size(18), search_paths].spacing(10),
