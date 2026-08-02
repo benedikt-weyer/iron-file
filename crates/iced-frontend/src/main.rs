@@ -609,6 +609,7 @@ enum Message {
     AddressChanged(String),
     StartAddressEdit,
     CancelAddressEdit,
+    EscapePressed,
     OpenAddress,
     OpenPath(PathBuf),
     NavigateBack,
@@ -764,7 +765,7 @@ impl Gui {
             iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
                 if key == keyboard::Key::Named(keyboard::key::Named::Escape) =>
             {
-                Some(Message::CancelAddressEdit)
+                Some(Message::EscapePressed)
             }
             iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
                 if modifiers.command() =>
@@ -958,6 +959,15 @@ impl Gui {
                 }
                 self.address = self.directory_path.display().to_string();
                 self.editing_address = false;
+                Task::none()
+            }
+            Message::EscapePressed => {
+                if self.pending_info.is_some() {
+                    self.pending_info = None;
+                } else if self.editing_address {
+                    self.address = self.directory_path.display().to_string();
+                    self.editing_address = false;
+                }
                 Task::none()
             }
             Message::OpenAddress => self.open_path(PathBuf::from(&self.address)),

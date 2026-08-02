@@ -924,6 +924,14 @@ impl Gui {
         });
         let info_dialog = self.pending_info.as_ref().map(|dialog_state| {
             const INFO_DIALOG_WIDTH: f32 = 460.0;
+            const INFO_DIALOG_MIN_HEIGHT: f32 = 180.0;
+            const INFO_DIALOG_MAX_HEIGHT: f32 = 400.0;
+            let info_dialog_height = match dialog_state {
+                InfoDialog::Loading(_) => INFO_DIALOG_MIN_HEIGHT,
+                InfoDialog::Error { .. } => 220.0,
+                InfoDialog::Loaded(info) => (152.0 + info.rows.len() as f32 * 28.0)
+                    .clamp(INFO_DIALOG_MIN_HEIGHT, INFO_DIALOG_MAX_HEIGHT),
+            };
             let dialog: Element<'_, Message> = match dialog_state {
                 InfoDialog::Loading(path) => container(
                     column![
@@ -953,7 +961,8 @@ impl Gui {
                         column![
                             text("Info").size(20),
                             text(&info.name),
-                            scrollable(rows).height(Length::Fixed(300.0)),
+                            scrollable(rows)
+                                .height(Length::Fixed((info_dialog_height - 128.0).max(52.0))),
                             row![
                                 Space::with_width(Length::Fill),
                                 button(text("Close")).on_press(Message::CloseEntryInfo)
@@ -990,31 +999,40 @@ impl Gui {
             let blur_kernel_size = theme_settings
                 .context_menu_blur_kernel_size
                 .effective_size(blur_strength);
-            let dialog = container(dialog).style(|theme: &Theme| {
-                iced::widget::container::Style::default()
-                    .background(theme.palette().background)
-                    .border(Border {
-                        color: theme.palette().primary,
-                        width: 1.0,
-                        radius: border_radius().into(),
-                    })
-            });
+            let dialog = container(dialog)
+                .width(Length::Fixed(INFO_DIALOG_WIDTH))
+                .height(Length::Fixed(info_dialog_height))
+                .style(|theme: &Theme| {
+                    iced::widget::container::Style::default()
+                        .background(theme.palette().background)
+                        .border(Border {
+                            color: theme.palette().primary,
+                            width: 1.0,
+                            radius: border_radius().into(),
+                        })
+                });
             let blur: Element<'_, Message> = if blur_strength > 0 {
                 iced::widget::shader::Shader::new(backdrop_blur::BackdropBlur::new(
                     blur_strength,
                     blur_kernel_size,
                 ))
-                .width(Length::Fill)
-                .height(Length::Fill)
+                .width(Length::Fixed(INFO_DIALOG_WIDTH))
+                .height(Length::Fixed(info_dialog_height))
                 .into()
             } else {
-                Space::new(Length::Fill, Length::Fill).into()
+                Space::new(
+                    Length::Fixed(INFO_DIALOG_WIDTH),
+                    Length::Fixed(info_dialog_height),
+                )
+                .into()
             };
+            let modal = container(stack![blur, dialog])
+                .width(Length::Fixed(INFO_DIALOG_WIDTH))
+                .height(Length::Fixed(info_dialog_height));
             stack![
                 mouse_area(Space::new(Length::Fill, Length::Fill))
                     .on_press(Message::CloseEntryInfo),
-                blur,
-                container(dialog)
+                container(modal)
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .center_x(Length::Fill)
