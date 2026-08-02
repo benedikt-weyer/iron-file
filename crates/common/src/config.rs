@@ -1,10 +1,10 @@
 use std::{
     collections::HashSet,
-    env, fs, io,
+    env, fmt, fs, io,
     path::{Path, PathBuf},
 };
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 const APP_NAME: &str = "iron-file";
 const PROFILES_DIRECTORY: &str = "profiles";
@@ -51,6 +51,13 @@ pub struct ThemeSettings {
     pub dark_highlight: String,
     #[serde(default = "default_background_opacity")]
     pub background_opacity: u8,
+    #[serde(
+        default = "default_context_menu_blur_strength",
+        alias = "context_menu_blur"
+    )]
+    pub context_menu_blur_strength: u8,
+    #[serde(default = "default_context_menu_blur_kernel_size")]
+    pub context_menu_blur_kernel_size: ContextMenuBlurKernelSize,
     #[serde(default = "default_border_radius")]
     pub border_radius: u8,
 }
@@ -59,8 +66,136 @@ fn default_background_opacity() -> u8 {
     100
 }
 
+fn default_context_menu_blur_strength() -> u8 {
+    2
+}
+
+fn default_context_menu_blur_kernel_size() -> ContextMenuBlurKernelSize {
+    ContextMenuBlurKernelSize::Dynamic
+}
+
 fn default_border_radius() -> u8 {
     6
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextMenuBlurKernelSize {
+    Fixed(u8),
+    Dynamic,
+}
+
+impl ContextMenuBlurKernelSize {
+    const FIXED_SIZES: [u8; 15] = [3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31];
+
+    pub const OPTIONS: [Self; 16] = [
+        Self::Fixed(3),
+        Self::Fixed(5),
+        Self::Fixed(7),
+        Self::Fixed(9),
+        Self::Fixed(11),
+        Self::Fixed(13),
+        Self::Fixed(15),
+        Self::Fixed(17),
+        Self::Fixed(19),
+        Self::Fixed(21),
+        Self::Fixed(23),
+        Self::Fixed(25),
+        Self::Fixed(27),
+        Self::Fixed(29),
+        Self::Fixed(31),
+        Self::Dynamic,
+    ];
+
+    pub fn effective_size(self, strength: u8) -> u8 {
+        match self {
+            Self::Fixed(size) => size,
+            Self::Dynamic => strength.saturating_mul(6).saturating_add(1).clamp(3, 31),
+        }
+    }
+
+    fn fixed(size: u8) -> Result<Self, String> {
+        if Self::FIXED_SIZES.contains(&size) {
+            Ok(Self::Fixed(size))
+        } else {
+            Err(format!("unsupported context menu blur kernel size: {size}"))
+        }
+    }
+}
+
+impl Default for ContextMenuBlurKernelSize {
+    fn default() -> Self {
+        default_context_menu_blur_kernel_size()
+    }
+}
+
+impl fmt::Display for ContextMenuBlurKernelSize {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Fixed(size) => write!(formatter, "{size} x {size}"),
+            Self::Dynamic => formatter.write_str("6sigma + 1"),
+        }
+    }
+}
+
+impl Serialize for ContextMenuBlurKernelSize {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Fixed(size) => serializer.serialize_u8(*size),
+            Self::Dynamic => serializer.serialize_str("6sigma+1"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ContextMenuBlurKernelSize {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct KernelSizeVisitor;
+
+        impl<'de> de::Visitor<'de> for KernelSizeVisitor {
+            type Value = ContextMenuBlurKernelSize;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an odd kernel size from 3 to 31 or 6sigma+1")
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let size = u8::try_from(value).map_err(E::custom)?;
+                ContextMenuBlurKernelSize::fixed(size).map_err(E::custom)
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let size = u8::try_from(value).map_err(E::custom)?;
+                ContextMenuBlurKernelSize::fixed(size).map_err(E::custom)
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if value == "6sigma+1" {
+                    Ok(ContextMenuBlurKernelSize::Dynamic)
+                } else {
+                    value
+                        .parse::<u8>()
+                        .map_err(E::custom)
+                        .and_then(|size| ContextMenuBlurKernelSize::fixed(size).map_err(E::custom))
+                }
+            }
+        }
+
+        deserializer.deserialize_any(KernelSizeVisitor)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -586,6 +721,51 @@ mod tests {
     }
 
     #[test]
+    fn reads_the_legacy_context_menu_blur_as_strength() {
+        let profile: ProfileFile = toml::from_str(
+            r##"
+                [theme]
+                light_highlight = "#111111"
+                dark_highlight = "#222222"
+                context_menu_blur = 14
+            "##,
+        )
+        .unwrap();
+
+        let theme = profile.theme.unwrap();
+        assert_eq!(theme.context_menu_blur_strength, 14);
+        assert_eq!(
+            theme.context_menu_blur_kernel_size,
+            default_context_menu_blur_kernel_size()
+        );
+    }
+
+    #[test]
+    fn reads_and_writes_the_dynamic_context_menu_blur_kernel() {
+        let profile: ProfileFile = toml::from_str(
+            r##"
+                [theme]
+                light_highlight = "#111111"
+                dark_highlight = "#222222"
+                context_menu_blur_kernel_size = "6sigma+1"
+            "##,
+        )
+        .unwrap();
+
+        let theme = profile.theme.unwrap();
+        assert_eq!(
+            theme.context_menu_blur_kernel_size,
+            ContextMenuBlurKernelSize::Dynamic
+        );
+        assert_eq!(theme.context_menu_blur_kernel_size.effective_size(2), 13);
+        assert_eq!(theme.context_menu_blur_kernel_size.effective_size(5), 31);
+        assert_eq!(
+            toml::to_string(&theme).unwrap(),
+            "light_highlight = \"#111111\"\ndark_highlight = \"#222222\"\nbackground_opacity = 100\ncontext_menu_blur_strength = 2\ncontext_menu_blur_kernel_size = \"6sigma+1\"\nborder_radius = 6\n"
+        );
+    }
+
+    #[test]
     fn discovers_profiles_from_all_search_paths() {
         let directory = test_directory();
         let user = directory.join("user");
@@ -638,6 +818,8 @@ mod tests {
             light_highlight: "#112233".into(),
             dark_highlight: "#445566".into(),
             background_opacity: 75,
+            context_menu_blur_strength: 3,
+            context_menu_blur_kernel_size: ContextMenuBlurKernelSize::Fixed(7),
             border_radius: 4,
         };
 

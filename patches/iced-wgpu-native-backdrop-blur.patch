@@ -1,0 +1,167 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index d79f0dc..6d540e4 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -118,12 +118,30 @@ impl Renderer {
+         clear_color: Option<Color>,
+         format: wgpu::TextureFormat,
+         frame: &wgpu::TextureView,
++        frame_texture: &wgpu::Texture,
+         viewport: &Viewport,
+         overlay: &[T],
+     ) {
++        let size = viewport.physical_size();
++        let needs_snapshot = engine
++            .primitive_storage
++            .get::<primitive::BackdropTexture>()
++            .map_or(true, |snapshot| snapshot.size != size);
++        if needs_snapshot {
++            engine.primitive_storage.store(primitive::BackdropTexture::new(
++                device, format, size,
++            ));
++        }
+         self.draw_overlay(overlay, viewport);
+         self.prepare(engine, device, queue, format, encoder, viewport);
+-        self.render(engine, encoder, frame, clear_color, viewport);
++        self.render(
++            engine,
++            encoder,
++            frame,
++            frame_texture,
++            clear_color,
++            viewport,
++        );
+ 
+         self.triangle_storage.trim();
+         self.text_storage.trim();
+@@ -215,6 +233,7 @@ impl Renderer {
+         engine: &mut Engine,
+         encoder: &mut wgpu::CommandEncoder,
+         frame: &wgpu::TextureView,
++        frame_texture: &wgpu::Texture,
+         clear_color: Option<Color>,
+         viewport: &Viewport,
+     ) {
+@@ -326,6 +345,28 @@ impl Renderer {
+                 let _ = ManuallyDrop::into_inner(render_pass);
+ 
+                 for instance in &layer.primitives {
++                    if instance.primitive.needs_backdrop() {
++                        if let Some(snapshot) = engine
++                            .primitive_storage
++                            .get::<primitive::BackdropTexture>()
++                        {
++                            encoder.copy_texture_to_texture(
++                                wgpu::ImageCopyTexture {
++                                    texture: frame_texture,
++                                    mip_level: 0,
++                                    origin: wgpu::Origin3d::ZERO,
++                                    aspect: wgpu::TextureAspect::All,
++                                },
++                                snapshot.texture.as_image_copy(),
++                                wgpu::Extent3d {
++                                    width: snapshot.size.width,
++                                    height: snapshot.size.height,
++                                    depth_or_array_layers: 1,
++                                },
++                            );
++                        }
++                    }
++
+                     if let Some(clip_bounds) = (instance.bounds * scale)
+                         .intersection(&physical_bounds)
+                         .and_then(Rectangle::snap)
+diff --git a/src/primitive.rs b/src/primitive.rs
+index 8641f27..53c757c 100644
+--- a/src/primitive.rs
++++ b/src/primitive.rs
+@@ -1,5 +1,5 @@
+ //! Draw custom primitives.
+-use crate::core::{self, Rectangle};
++use crate::core::{self, Rectangle, Size};
+ use crate::graphics::Viewport;
+ 
+ use rustc_hash::FxHashMap;
+@@ -11,6 +11,11 @@ pub type Batch = Vec<Instance>;
+ 
+ /// A set of methods which allows a [`Primitive`] to be rendered.
+ pub trait Primitive: Debug + Send + Sync + 'static {
++    /// Returns whether this primitive samples the framebuffer behind it.
++    fn needs_backdrop(&self) -> bool {
++        false
++    }
++
+     /// Processes the [`Primitive`], allowing for GPU buffer allocation.
+     fn prepare(
+         &self,
+@@ -32,6 +37,40 @@ pub trait Primitive: Debug + Send + Sync + 'static {
+     );
+ }
+ 
++/// A sampleable copy of the surface directly below a backdrop primitive.
++#[derive(Debug)]
++pub struct BackdropTexture {
++    pub texture: wgpu::Texture,
++    pub view: wgpu::TextureView,
++    pub size: Size<u32>,
++}
++
++impl BackdropTexture {
++    pub fn new(
++        device: &wgpu::Device,
++        format: wgpu::TextureFormat,
++        size: Size<u32>,
++    ) -> Self {
++        let texture = device.create_texture(&wgpu::TextureDescriptor {
++            label: Some("iced_wgpu.backdrop.snapshot"),
++            size: wgpu::Extent3d {
++                width: size.width,
++                height: size.height,
++                depth_or_array_layers: 1,
++            },
++            mip_level_count: 1,
++            sample_count: 1,
++            dimension: wgpu::TextureDimension::D2,
++            format,
++            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
++            view_formats: &[],
++        });
++        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
++
++        Self { texture, view, size }
++    }
++}
++
+ #[derive(Debug)]
+ /// An instance of a specific [`Primitive`].
+ pub struct Instance {
+diff --git a/src/window/compositor.rs b/src/window/compositor.rs
+index 2e938c7..01096a2 100644
+--- a/src/window/compositor.rs
++++ b/src/window/compositor.rs
+@@ -235,6 +235,7 @@ pub fn present<T: AsRef<str>>(
+                 Some(background_color),
+                 frame.texture.format(),
+                 view,
++                &frame.texture,
+                 viewport,
+                 overlay,
+             );
+@@ -329,7 +330,8 @@ impl graphics::Compositor for Compositor {
+         surface.configure(
+             &self.device,
+             &wgpu::SurfaceConfiguration {
+-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
++                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
++                    | wgpu::TextureUsages::COPY_SRC,
+                 format: self.format,
+                 present_mode: self.settings.present_mode,
+                 width,
+@@ -420,6 +422,7 @@ pub fn screenshot<T: AsRef<str>>(
+         Some(background_color),
+         texture.format(),
+         &view,
++        &texture,
+         viewport,
+         overlay,
+     );

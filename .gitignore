@@ -1,2 +1,5 @@
 /target
 .direnv/
+vendor/*
+!vendor/iced-wgpu/
+!vendor/iced-wgpu/**

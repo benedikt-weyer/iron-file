@@ -1,3 +1,5 @@
+mod backdrop_blur;
+
 use std::{
     cell::Cell,
     collections::{HashMap, HashSet},
@@ -12,7 +14,8 @@ use std::{
 };
 
 use iced::{
-    Background, Border, Color, Element, Font, Gradient, Length, Point, Subscription, Task, Theme,
+    Background, Border, Color, Element, Font, Gradient, Length, Point, Shadow, Subscription, Task,
+    Theme, Vector,
     gradient::Linear,
     keyboard, mouse,
     widget::{
@@ -24,7 +27,10 @@ use iced::{
 use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{
     browse_with_thumbnails, compress_entries,
-    config::{BrowserLayout, BrowserSettings, ColorMode, ConfigStore, Profile, SidebarLocation},
+    config::{
+        BrowserLayout, BrowserSettings, ColorMode, ConfigStore, ContextMenuBlurKernelSize, Profile,
+        SidebarLocation,
+    },
     copy_entries, create_entry, create_symlinks, create_thumbnail, delete_entries, ensure_backend,
     extract_archives, pipe_backend_logs, proto, restart_backend, stream_directory,
 };
@@ -472,6 +478,8 @@ enum PreferenceOption {
     LightAccent,
     DarkAccent,
     BackgroundOpacity,
+    ContextMenuBlurStrength,
+    ContextMenuBlurKernelSize,
     BorderRadius,
     Layout,
     ItemSize,
@@ -540,6 +548,8 @@ enum Message {
     ResetPreference(PreferenceOption),
     ColorModeSelected(ColorMode),
     BackgroundOpacityChanged(u8),
+    ContextMenuBlurStrengthChanged(u8),
+    ContextMenuBlurKernelSizeChanged(ContextMenuBlurKernelSize),
     BorderRadiusChanged(u8),
     OpenAccentPicker(bool),
     AccentHueChanged(u16),
@@ -1014,6 +1024,14 @@ impl Gui {
                 self.save_background_opacity(opacity);
                 Task::none()
             }
+            Message::ContextMenuBlurStrengthChanged(strength) => {
+                self.save_context_menu_blur_strength(strength);
+                Task::none()
+            }
+            Message::ContextMenuBlurKernelSizeChanged(kernel_size) => {
+                self.save_context_menu_blur_kernel_size(kernel_size);
+                Task::none()
+            }
             Message::BorderRadiusChanged(radius) => {
                 self.save_border_radius(radius);
                 Task::none()
@@ -1456,6 +1474,12 @@ impl Gui {
             PreferenceOption::DarkAccent => theme.dark_highlight == theme_defaults.dark_highlight,
             PreferenceOption::BackgroundOpacity => {
                 theme.background_opacity == theme_defaults.background_opacity
+            }
+            PreferenceOption::ContextMenuBlurStrength => {
+                theme.context_menu_blur_strength == theme_defaults.context_menu_blur_strength
+            }
+            PreferenceOption::ContextMenuBlurKernelSize => {
+                theme.context_menu_blur_kernel_size == theme_defaults.context_menu_blur_kernel_size
             }
             PreferenceOption::BorderRadius => theme.border_radius == theme_defaults.border_radius,
             PreferenceOption::Layout => browser.layout == browser_defaults.layout,
@@ -1904,6 +1928,8 @@ impl Gui {
             PreferenceOption::LightAccent
             | PreferenceOption::DarkAccent
             | PreferenceOption::BackgroundOpacity
+            | PreferenceOption::ContextMenuBlurStrength
+            | PreferenceOption::ContextMenuBlurKernelSize
             | PreferenceOption::BorderRadius => {
                 let defaults = iron_file_common::config::default_theme_settings();
                 let mut theme = self.active_theme_settings();
@@ -1913,6 +1939,10 @@ impl Gui {
                     theme.dark_highlight = defaults.dark_highlight;
                 } else if matches!(option, PreferenceOption::BackgroundOpacity) {
                     theme.background_opacity = defaults.background_opacity;
+                } else if matches!(option, PreferenceOption::ContextMenuBlurStrength) {
+                    theme.context_menu_blur_strength = defaults.context_menu_blur_strength;
+                } else if matches!(option, PreferenceOption::ContextMenuBlurKernelSize) {
+                    theme.context_menu_blur_kernel_size = defaults.context_menu_blur_kernel_size;
                 } else {
                     theme.border_radius = defaults.border_radius;
                 }
@@ -2017,6 +2047,40 @@ impl Gui {
         };
         let mut theme = profile.theme.clone();
         theme.border_radius = radius.min(8);
+        match self.config_store.save_theme_settings(profile, theme) {
+            Ok(saved_profile) => self.apply_saved_profile(saved_profile),
+            Err(error) => self.status = error,
+        }
+    }
+
+    fn save_context_menu_blur_strength(&mut self, strength: u8) {
+        let Some(path) = self.active_profile.clone() else {
+            self.status = "No active configuration profile".into();
+            return;
+        };
+        let Some(profile) = self.profiles.iter().find(|profile| profile.path == path) else {
+            self.status = "The active configuration profile is unavailable".into();
+            return;
+        };
+        let mut theme = profile.theme.clone();
+        theme.context_menu_blur_strength = strength.min(5);
+        match self.config_store.save_theme_settings(profile, theme) {
+            Ok(saved_profile) => self.apply_saved_profile(saved_profile),
+            Err(error) => self.status = error,
+        }
+    }
+
+    fn save_context_menu_blur_kernel_size(&mut self, kernel_size: ContextMenuBlurKernelSize) {
+        let Some(path) = self.active_profile.clone() else {
+            self.status = "No active configuration profile".into();
+            return;
+        };
+        let Some(profile) = self.profiles.iter().find(|profile| profile.path == path) else {
+            self.status = "The active configuration profile is unavailable".into();
+            return;
+        };
+        let mut theme = profile.theme.clone();
+        theme.context_menu_blur_kernel_size = kernel_size;
         match self.config_store.save_theme_settings(profile, theme) {
             Ok(saved_profile) => self.apply_saved_profile(saved_profile),
             Err(error) => self.status = error,
@@ -2717,6 +2781,7 @@ impl Gui {
                 }
             };
             let mut actions = column![action].spacing(4);
+            let mut action_count = 1_u16;
             if !self.selected_entries.is_empty() {
                 actions = actions.push(
                     button(row![icon_text("copy").size(16), text("Copy selection")].spacing(8))
@@ -2736,6 +2801,7 @@ impl Gui {
                         BrowserCommand::DeleteSelection,
                     )),
                 );
+                action_count += 2;
             }
             if self.paste_buffer.is_some() {
                 actions = actions.push(
@@ -2744,6 +2810,7 @@ impl Gui {
                         .style(context_menu_button_style)
                         .on_press(Message::ExecuteBrowserCommand(BrowserCommand::Paste)),
                 );
+                action_count += 1;
             }
             if entry.is_directory {
                 actions = actions.push(
@@ -2798,17 +2865,36 @@ impl Gui {
                     .style(context_menu_button_style)
                     .on_press(Message::OpenTerminalHere),
                 );
+                action_count += 5;
             }
+            let theme_settings = self.active_theme_settings();
+            let context_menu_blur_strength = if theme_settings.background_opacity < 100 {
+                theme_settings.context_menu_blur_strength.min(5)
+            } else {
+                0
+            };
+            let context_menu_blur_kernel_size = theme_settings
+                .context_menu_blur_kernel_size
+                .effective_size(context_menu_blur_strength);
             let menu = container(actions)
                 .width(Length::Fixed(240.0))
                 .padding(8)
-                .style(|theme: &Theme| {
+                .style(move |theme: &Theme| {
                     iced::widget::container::Style::default()
                         .background(theme.palette().background)
                         .border(Border {
                             color: Color::from_rgba8(128, 128, 128, 0.45),
                             width: 1.0,
                             radius: border_radius().into(),
+                        })
+                        .shadow(Shadow {
+                            color: Color::BLACK.scale_alpha(
+                                (context_menu_blur_strength > 0)
+                                    .then_some(0.35)
+                                    .unwrap_or(0.0),
+                            ),
+                            offset: Vector::new(0.0, 3.0),
+                            blur_radius: f32::from(context_menu_blur_strength),
                         })
                 });
             let menu_position = container(column![
@@ -2817,10 +2903,33 @@ impl Gui {
             ])
             .width(Length::Fill)
             .height(Length::Fill);
+            let menu_height = f32::from(action_count) * 30.0
+                + f32::from(action_count.saturating_sub(1)) * 4.0
+                + 16.0;
+            let blur_position: Element<'_, Message> = if context_menu_blur_strength > 0 {
+                container(column![
+                    Space::with_height(self.context_position.y),
+                    row![
+                        Space::with_width(self.context_position.x),
+                        iced::widget::shader::Shader::new(backdrop_blur::BackdropBlur::new(
+                            context_menu_blur_strength,
+                            context_menu_blur_kernel_size,
+                        ))
+                        .width(Length::Fixed(240.0))
+                        .height(Length::Fixed(menu_height)),
+                    ],
+                ])
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+            } else {
+                Space::new(Length::Fill, Length::Fill).into()
+            };
             stack![
                 mouse_area(Space::new(Length::Fill, Length::Fill))
                     .on_press(Message::CloseFolderContext)
                     .on_right_press(Message::CloseFolderContext),
+                blur_position,
                 menu_position,
             ]
             .width(Length::Fill)
@@ -3486,6 +3595,29 @@ impl Gui {
                         .width(Length::Fill),
                         text(format!("{}%", theme.background_opacity.min(100))),
                         self.preference_reset_button(PreferenceOption::BackgroundOpacity),
+                    ]
+                    .spacing(10),
+                    row![
+                        text("Blur strength"),
+                        slider(
+                            0..=5,
+                            theme.context_menu_blur_strength.min(5),
+                            Message::ContextMenuBlurStrengthChanged,
+                        )
+                        .width(Length::Fill),
+                        text(format!("sigma {}", theme.context_menu_blur_strength.min(5))),
+                        self.preference_reset_button(PreferenceOption::ContextMenuBlurStrength),
+                    ]
+                    .spacing(10),
+                    row![
+                        text("Kernel size"),
+                        pick_list(
+                            ContextMenuBlurKernelSize::OPTIONS,
+                            Some(theme.context_menu_blur_kernel_size),
+                            Message::ContextMenuBlurKernelSizeChanged,
+                        )
+                        .width(Length::Fill),
+                        self.preference_reset_button(PreferenceOption::ContextMenuBlurKernelSize),
                     ]
                     .spacing(10),
                     row![

@@ -6,6 +6,8 @@ color_mode = "system"
 light_highlight = "#4f7cac"
 dark_highlight = "#2b313b"
 background_opacity = 100
+context_menu_blur_strength = 2
+context_menu_blur_kernel_size = "6sigma+1"
 border_radius = 6
 
 [browser]

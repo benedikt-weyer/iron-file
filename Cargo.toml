@@ -12,3 +12,6 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+
+[patch.crates-io]
+iced_wgpu = { path = "vendor/iced-wgpu" }
