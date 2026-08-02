@@ -2,6 +2,16 @@ use super::*;
 use iced::widget::text::Wrapping;
 use iced::widget::{column, row, stack};
 
+fn name_label_lines(name: &str, line_characters: usize, max_lines: usize) -> Vec<String> {
+    let max_characters = line_characters.saturating_mul(max_lines);
+    let label = truncate_label(name, max_characters);
+    let characters = label.chars().collect::<Vec<_>>();
+    characters
+        .chunks(line_characters.max(1))
+        .map(|line| line.iter().collect())
+        .collect()
+}
+
 fn name_label(
     name: &str,
     line_characters: usize,
@@ -9,14 +19,10 @@ fn name_label(
     line_height: f32,
     alignment: iced::alignment::Horizontal,
 ) -> Element<'_, Message> {
-    let max_characters = line_characters.saturating_mul(max_lines);
-    let label = truncate_label(name, max_characters);
-    let characters = label.chars().collect::<Vec<_>>();
-    let lines = characters
-        .chunks(line_characters.max(1))
-        .map(|line| line.iter().collect::<String>());
+    let lines = name_label_lines(name, line_characters, max_lines);
 
     lines
+        .into_iter()
         .fold(column![], |column, line| {
             column.push(
                 text(line)
@@ -26,7 +32,6 @@ fn name_label(
             )
         })
         .width(Length::Fill)
-        .height(Length::Fixed(line_height * max_lines as f32))
         .into()
 }
 
@@ -105,7 +110,7 @@ impl Gui {
             let tile_columns = Rc::clone(&self.tile_columns);
             responsive(move |size| {
                 let tile_width = f32::from(browser_settings.item_size) * 3.5;
-                let tile_height = tile_width * 1.2;
+                let tile_icon_size = browser_settings.item_size.saturating_mul(9) / 5;
                 let tile_name_line_characters = (tile_width / 8.0).floor().max(8.0) as usize;
                 let columns = (size.width / tile_width).floor().max(1.0) as usize;
                 tile_columns.set(columns);
@@ -113,13 +118,26 @@ impl Gui {
                     visible_entries
                         .chunks(columns)
                         .fold(column![].spacing(8), |column, chunk| {
+                            let max_tile_name_lines = chunk
+                                .iter()
+                                .map(|entry| {
+                                    name_label_lines(
+                                        &entry.name,
+                                        tile_name_line_characters,
+                                        max_name_lines,
+                                    )
+                                    .len()
+                                })
+                                .max()
+                                .unwrap_or(1);
+                            let tile_height = f32::from(tile_icon_size)
+                                + 6.0
+                                + 20.0 * max_tile_name_lines as f32
+                                + 10.0;
                             let tiles = chunk.iter().fold(row![].spacing(8), |row, entry| {
                                 let path = PathBuf::from(&entry.path);
                                 let is_selected = self.selected_entries.contains(&path);
-                                let icon = self.entry_icon(
-                                    entry,
-                                    browser_settings.item_size.saturating_mul(9) / 5,
-                                );
+                                let icon = self.entry_icon(entry, tile_icon_size);
                                 let tile_content = container(
                                     column![
                                         icon,
