@@ -200,7 +200,7 @@ pub(super) fn modern_scrollable_style(
 ) -> iced::widget::scrollable::Style {
     let palette = theme.extended_palette();
     let thumb_color = match status {
-        iced::widget::scrollable::Status::Active => {
+        iced::widget::scrollable::Status::Active { .. } => {
             palette.background.strong.color.scale_alpha(0.45)
         }
         iced::widget::scrollable::Status::Hovered { .. } => {
@@ -216,7 +216,7 @@ pub(super) fn modern_scrollable_style(
             radius: 4.0.into(),
         },
         scroller: iced::widget::scrollable::Scroller {
-            color: thumb_color,
+            background: thumb_color.into(),
             border: Border {
                 color: Color::TRANSPARENT,
                 width: 0.0,
@@ -229,6 +229,12 @@ pub(super) fn modern_scrollable_style(
         vertical_rail: rail,
         horizontal_rail: rail,
         gap: None,
+        auto_scroll: iced::widget::scrollable::AutoScroll {
+            background: Color::TRANSPARENT.into(),
+            border: Border::default(),
+            shadow: iced::Shadow::default(),
+            icon: palette.background.base.text,
+        },
     }
 }
 
@@ -254,7 +260,8 @@ pub(super) fn rounded_pick_list_style(
         border: Border {
             color: if matches!(
                 status,
-                iced::widget::pick_list::Status::Hovered | iced::widget::pick_list::Status::Opened
+                iced::widget::pick_list::Status::Hovered
+                    | iced::widget::pick_list::Status::Opened { .. }
             ) {
                 theme.palette().primary
             } else {
@@ -278,6 +285,7 @@ pub(super) fn rounded_pick_list_menu_style(theme: &Theme) -> iced::widget::overl
         text_color: palette.background.base.text,
         selected_text_color: contrasting_text_color(theme.palette().primary),
         selected_background: theme.palette().primary.into(),
+        shadow: iced::Shadow::default(),
     }
 }
 

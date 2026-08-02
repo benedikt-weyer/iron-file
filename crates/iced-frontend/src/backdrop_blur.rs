@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use iced::{Rectangle, mouse, widget::shader};
-use iced_wgpu::primitive::BackdropTexture;
+use iced_wgpu::{primitive::BackdropTexture, wgpu};
 
 const SHADER: &str = r#"
 struct BlurUniform {
@@ -90,87 +90,92 @@ struct BlurUniform {
     kernel_size: u32,
 }
 
-struct Pipeline {
-    pipeline: shader::wgpu::RenderPipeline,
-    bind_group_layout: shader::wgpu::BindGroupLayout,
-    uniform_buffer: shader::wgpu::Buffer,
-    bind_group: Option<shader::wgpu::BindGroup>,
+pub struct Pipeline {
+    pipeline: wgpu::RenderPipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
+    uniform_buffer: wgpu::Buffer,
+    bind_group: Option<wgpu::BindGroup>,
 }
 
-impl Pipeline {
-    fn new(device: &shader::wgpu::Device, format: shader::wgpu::TextureFormat) -> Self {
-        let bind_group_layout =
-            device.create_bind_group_layout(&shader::wgpu::BindGroupLayoutDescriptor {
-                label: Some("iron_file.backdrop_blur.layout"),
-                entries: &[
-                    shader::wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: shader::wgpu::ShaderStages::FRAGMENT,
-                        ty: shader::wgpu::BindingType::Sampler(
-                            shader::wgpu::SamplerBindingType::Filtering,
-                        ),
-                        count: None,
+impl shader::Pipeline for Pipeline {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
+    fn new(device: &wgpu::Device, _queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("iron_file.backdrop_blur.layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     },
-                    shader::wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: shader::wgpu::ShaderStages::FRAGMENT,
-                        ty: shader::wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: shader::wgpu::TextureViewDimension::D2,
-                            sample_type: shader::wgpu::TextureSampleType::Float {
-                                filterable: true,
-                            },
-                        },
-                        count: None,
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    shader::wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: shader::wgpu::ShaderStages::FRAGMENT,
-                        ty: shader::wgpu::BindingType::Buffer {
-                            ty: shader::wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-        let pipeline_layout =
-            device.create_pipeline_layout(&shader::wgpu::PipelineLayoutDescriptor {
-                label: Some("iron_file.backdrop_blur.pipeline_layout"),
-                bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
-            });
-        let module = device.create_shader_module(shader::wgpu::ShaderModuleDescriptor {
-            label: Some("iron_file.backdrop_blur.shader"),
-            source: shader::wgpu::ShaderSource::Wgsl(SHADER.into()),
+                    count: None,
+                },
+            ],
         });
-        let pipeline = device.create_render_pipeline(&shader::wgpu::RenderPipelineDescriptor {
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("iron_file.backdrop_blur.pipeline_layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("iron_file.backdrop_blur.shader"),
+            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("iron_file.backdrop_blur.pipeline"),
             layout: Some(&pipeline_layout),
-            vertex: shader::wgpu::VertexState {
+            vertex: wgpu::VertexState {
                 module: &module,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
                 buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
-            fragment: Some(shader::wgpu::FragmentState {
+            fragment: Some(wgpu::FragmentState {
                 module: &module,
-                entry_point: "fs_main",
-                targets: &[Some(shader::wgpu::ColorTargetState {
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: Some(shader::wgpu::BlendState::REPLACE),
-                    write_mask: shader::wgpu::ColorWrites::ALL,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
                 })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
-            primitive: shader::wgpu::PrimitiveState::default(),
+            primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
-            multisample: shader::wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState::default(),
             multiview: None,
+            cache: None,
         });
-        let uniform_buffer = device.create_buffer(&shader::wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("iron_file.backdrop_blur.uniform"),
             size: size_of::<BlurUniform>() as u64,
-            usage: shader::wgpu::BufferUsages::UNIFORM | shader::wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -184,54 +189,48 @@ impl Pipeline {
 }
 
 impl shader::Primitive for BlurPrimitive {
+    type Pipeline = Pipeline;
+
     fn needs_backdrop(&self) -> bool {
         true
     }
 
     fn prepare(
         &self,
-        device: &shader::wgpu::Device,
-        queue: &shader::wgpu::Queue,
-        format: shader::wgpu::TextureFormat,
-        storage: &mut shader::Storage,
+        pipeline: &mut Pipeline,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
         _bounds: &Rectangle,
         viewport: &shader::Viewport,
+        backdrop: Option<&BackdropTexture>,
     ) {
-        if !storage.has::<Pipeline>() {
-            storage.store(Pipeline::new(device, format));
-        }
-
-        let sampler = device.create_sampler(&shader::wgpu::SamplerDescriptor {
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("iron_file.backdrop_blur.sampler"),
-            mag_filter: shader::wgpu::FilterMode::Linear,
-            min_filter: shader::wgpu::FilterMode::Linear,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
         let bind_group = {
-            let pipeline = storage.get::<Pipeline>().expect("backdrop pipeline");
-            let backdrop = storage
-                .get::<BackdropTexture>()
-                .expect("backdrop texture is installed by the renderer patch");
-            device.create_bind_group(&shader::wgpu::BindGroupDescriptor {
+            let backdrop = backdrop.expect("backdrop texture is installed by the renderer patch");
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("iron_file.backdrop_blur.bind_group"),
                 layout: &pipeline.bind_group_layout,
                 entries: &[
-                    shader::wgpu::BindGroupEntry {
+                    wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: shader::wgpu::BindingResource::Sampler(&sampler),
+                        resource: wgpu::BindingResource::Sampler(&sampler),
                     },
-                    shader::wgpu::BindGroupEntry {
+                    wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: shader::wgpu::BindingResource::TextureView(&backdrop.view),
+                        resource: wgpu::BindingResource::TextureView(&backdrop.view),
                     },
-                    shader::wgpu::BindGroupEntry {
+                    wgpu::BindGroupEntry {
                         binding: 2,
                         resource: pipeline.uniform_buffer.as_entire_binding(),
                     },
                 ],
             })
         };
-        let pipeline = storage.get_mut::<Pipeline>().expect("backdrop pipeline");
         queue.write_buffer(
             &pipeline.uniform_buffer,
             0,
@@ -249,21 +248,21 @@ impl shader::Primitive for BlurPrimitive {
 
     fn render(
         &self,
-        encoder: &mut shader::wgpu::CommandEncoder,
-        storage: &shader::Storage,
-        target: &shader::wgpu::TextureView,
+        pipeline: &Pipeline,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
         clip_bounds: &Rectangle<u32>,
     ) {
-        let pipeline = storage.get::<Pipeline>().expect("backdrop pipeline");
         let bind_group = pipeline.bind_group.as_ref().expect("backdrop bind group");
-        let mut pass = encoder.begin_render_pass(&shader::wgpu::RenderPassDescriptor {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("iron_file.backdrop_blur.render_pass"),
-            color_attachments: &[Some(shader::wgpu::RenderPassColorAttachment {
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
+                depth_slice: None,
                 resolve_target: None,
-                ops: shader::wgpu::Operations {
-                    load: shader::wgpu::LoadOp::Load,
-                    store: shader::wgpu::StoreOp::Store,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
                 },
             })],
             depth_stencil_attachment: None,

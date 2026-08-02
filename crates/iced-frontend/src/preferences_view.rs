@@ -206,7 +206,8 @@ impl Gui {
                         });
                     column.push(
                         row![
-                            checkbox(item.to_string(), enabled)
+                            checkbox(enabled)
+                                .label(item.to_string())
                                 .on_toggle(move |enabled| Message::ContextMenuItemToggled {
                                     item,
                                     is_directory,
@@ -265,7 +266,8 @@ impl Gui {
                     .map(|_| Message::MoveQuickToolbarItem(item, false));
                 column.push(
                     row![
-                        checkbox(item.to_string(), enabled)
+                        checkbox(enabled)
+                            .label(item.to_string())
                             .on_toggle(move |enabled| {
                                 Message::QuickToolbarItemToggled(item, enabled)
                             })
@@ -510,7 +512,7 @@ impl Gui {
                     })
             });
             stack![
-                mouse_area(Space::new(Length::Fill, Length::Fill))
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
                     .on_press(Message::CancelProfileReset),
                 container(dialog)
                     .width(Length::Fill)
@@ -535,9 +537,9 @@ impl Gui {
                     .add_stop(1.0, hue_color(360)),
             );
             let hue = stack![
-                container(Space::new(Length::Fill, Length::Fixed(10.0))).style(move |_| {
-                    iced::widget::container::Style::default().background(hue_gradient)
-                }),
+                container(Space::new().width(Length::Fill).height(Length::Fixed(10.0))).style(
+                    move |_| { iced::widget::container::Style::default().background(hue_gradient) }
+                ),
                 slider(0..=360, picker.hue, Message::AccentHueChanged)
                     .width(Length::Fill)
                     .style(|theme, status| {
@@ -557,9 +559,11 @@ impl Gui {
                     .add_stop(1.0, hsv_color(picker.hue, 255, picker.value)),
             );
             let saturation = stack![
-                container(Space::new(Length::Fill, Length::Fixed(10.0))).style(move |_| {
-                    iced::widget::container::Style::default().background(saturation_gradient)
-                }),
+                container(Space::new().width(Length::Fill).height(Length::Fixed(10.0))).style(
+                    move |_| {
+                        iced::widget::container::Style::default().background(saturation_gradient)
+                    }
+                ),
                 slider(0..=255, picker.saturation, Message::AccentSaturationChanged)
                     .width(Length::Fill)
                     .style(|theme, status| {
@@ -579,9 +583,11 @@ impl Gui {
                     .add_stop(1.0, hsv_color(picker.hue, picker.saturation, 255)),
             );
             let value = stack![
-                container(Space::new(Length::Fill, Length::Fixed(10.0))).style(move |_| {
-                    iced::widget::container::Style::default().background(value_gradient)
-                }),
+                container(Space::new().width(Length::Fill).height(Length::Fixed(10.0))).style(
+                    move |_| {
+                        iced::widget::container::Style::default().background(value_gradient)
+                    }
+                ),
                 slider(0..=255, picker.value, Message::AccentValueChanged)
                     .width(Length::Fill)
                     .style(|theme, status| {
@@ -602,9 +608,9 @@ impl Gui {
                     } else {
                         "Light accent color"
                     }),
-                    container(Space::new(Length::Fill, Length::Fixed(42.0))).style(move |_| {
-                        iced::widget::container::Style::default().background(color)
-                    }),
+                    container(Space::new().width(Length::Fill).height(Length::Fixed(42.0))).style(
+                        move |_| { iced::widget::container::Style::default().background(color) }
+                    ),
                     text("Hue"),
                     hue,
                     text("Saturation"),
@@ -631,7 +637,7 @@ impl Gui {
                     })
             });
             stack![
-                mouse_area(Space::new(Length::Fill, Length::Fill))
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
                     .on_press(Message::CancelAccentPicker),
                 container(dialog)
                     .width(Length::Fill)

@@ -69,23 +69,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Ok(runtime) = Runtime::new() {
         let _ = runtime.block_on(ensure_backend());
     }
-    iced::application("Iron File", Gui::update, Gui::view)
-        .theme(Gui::theme)
-        .subscription(Gui::subscription)
-        .window(window::Settings {
-            transparent: true,
-            platform_specific: window::settings::PlatformSpecific {
-                // Must match iron-file.desktop so the desktop shell can resolve the dock icon.
-                application_id: "iron-file".into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
-        .run_with(move || {
-            let gui = Gui::new(startup.follow_logs, startup.initial_path, startup.picker);
+    let startup_follow_logs = startup.follow_logs;
+    let startup_path = startup.initial_path.clone();
+    let startup_picker = startup.picker.clone();
+    iced::application(
+        move || {
+            let gui = Gui::new(
+                startup_follow_logs,
+                startup_path.clone(),
+                startup_picker.clone(),
+            );
             let task = gui.load_initial_directory();
             (gui, task)
-        })?;
+        },
+        Gui::update,
+        Gui::view,
+    )
+    .title("Iron File")
+    .theme(Gui::theme)
+    .subscription(Gui::subscription)
+    .window(window::Settings {
+        transparent: true,
+        platform_specific: window::settings::PlatformSpecific {
+            // Must match iron-file.desktop so the desktop shell can resolve the dock icon.
+            application_id: "iron-file".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .run()?;
     Ok(())
 }
 
@@ -795,7 +807,6 @@ enum Message {
     RefreshDirectory,
     CloneWindow,
     DuplicateContextEntry(PathBuf),
-    CloseWindow(Option<window::Id>),
     RestartBackend,
     BackendRestarted(Result<(), String>),
     ThumbnailGenerated {
@@ -1103,8 +1114,6 @@ impl Gui {
                 };
                 Task::perform(copy_entries(vec![path], parent), Message::FileCopyFinished)
             }
-            Message::CloseWindow(Some(id)) => window::close(id),
-            Message::CloseWindow(None) => Task::none(),
             Message::ExecuteBrowserCommand(command) => self.execute_browser_command(command),
             Message::FileCopyFinished(result) => match result {
                 Ok(paths) => {
@@ -2090,7 +2099,7 @@ impl Gui {
         let base = match self.color_mode {
             ColorMode::Day => Theme::Light,
             ColorMode::Night => Theme::Dark,
-            ColorMode::System => Theme::default(),
+            ColorMode::System => Theme::Dark,
         };
         let theme_settings = self.active_theme_settings();
         let highlight = if matches!(base, Theme::Dark) {
@@ -2106,7 +2115,7 @@ impl Gui {
         palette.background = palette
             .background
             .scale_alpha(f32::from(theme_settings.background_opacity.min(100)) / 100.0);
-        Theme::custom("Iron File".into(), palette)
+        Theme::custom("Iron File", palette)
     }
 
     fn active_theme_settings(&self) -> iron_file_common::config::ThemeSettings {
@@ -2126,8 +2135,12 @@ impl Gui {
         .unwrap_or(Color::BLACK);
         button(
             row![
-                container(Space::new(Length::Fixed(20.0), Length::Fixed(20.0)))
-                    .style(move |_| iced::widget::container::Style::default().background(color)),
+                container(
+                    Space::new()
+                        .width(Length::Fixed(20.0))
+                        .height(Length::Fixed(20.0))
+                )
+                .style(move |_| iced::widget::container::Style::default().background(color)),
                 text(if dark {
                     "Dark accent color"
                 } else {
@@ -2516,7 +2529,7 @@ impl Gui {
     }
 
     fn close_window(&self) -> Task<Message> {
-        window::get_oldest().map(Message::CloseWindow)
+        iced::exit()
     }
 
     fn execute_browser_command(&mut self, command: BrowserCommand) -> Task<Message> {

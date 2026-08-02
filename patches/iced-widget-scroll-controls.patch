@@ -1,0 +1,245 @@
+diff -ru a/src/column.rs b/src/column.rs
+--- a/src/column.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/column.rs	2026-08-02 23:11:46.960254953 +0200
+@@ -153,6 +153,17 @@
+         self
+     }
+ 
++    /// Adds an element when present.
++    pub fn push_maybe(
++        self,
++        child: Option<impl Into<Element<'a, Message, Theme, Renderer>>>,
++    ) -> Self {
++        match child {
++            Some(child) => self.push(child),
++            None => self,
++        }
++    }
++
+     /// Extends the [`Column`] with the given children.
+     pub fn extend(
+         self,
+Only in b/src/lazy: responsive.rs
+diff -ru a/src/row.rs b/src/row.rs
+--- a/src/row.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/row.rs	2026-08-02 23:11:46.960254953 +0200
+@@ -144,6 +144,17 @@
+         self
+     }
+ 
++    /// Adds an element when present.
++    pub fn push_maybe(
++        self,
++        child: Option<impl Into<Element<'a, Message, Theme, Renderer>>>,
++    ) -> Self {
++        match child {
++            Some(child) => self.push(child),
++            None => self,
++        }
++    }
++
+     /// Extends the [`Row`] with the given children.
+     pub fn extend(
+         self,
+diff -ru a/src/scrollable.rs b/src/scrollable.rs
+--- a/src/scrollable.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/scrollable.rs	2026-08-02 23:18:02.747572987 +0200
+@@ -80,6 +80,8 @@
+     auto_scroll: bool,
+     content: Element<'a, Message, Theme, Renderer>,
+     on_scroll: Option<Box<dyn Fn(Viewport) -> Message + 'a>>,
++    smooth_scrolling: bool,
++    scroll_step: f32,
+     class: Theme::Class<'a>,
+     last_status: Option<Status>,
+ }
+@@ -109,6 +111,8 @@
+             auto_scroll: false,
+             content: content.into(),
+             on_scroll: None,
++            smooth_scrolling: false,
++            scroll_step: 60.0,
+             class: Theme::default(),
+             last_status: None,
+         }
+@@ -166,6 +170,18 @@
+         self
+     }
+ 
++    /// Enables animated wheel scrolling.
++    pub fn smooth_scrolling(mut self, enabled: bool) -> Self {
++        self.smooth_scrolling = enabled;
++        self
++    }
++
++    /// Sets the distance moved by one line-wheel event.
++    pub fn scroll_step(mut self, step: f32) -> Self {
++        self.scroll_step = step.max(1.0);
++        self
++    }
++
+     /// Anchors the vertical [`Scrollable`] direction to the top.
+     pub fn anchor_top(self) -> Self {
+         self.anchor_y(Anchor::Start)
+@@ -869,19 +885,27 @@
+                                 Vector::new(y, x)
+                             };
+ 
+-                            // TODO: Configurable speed/friction (?)
+-                            -movement * 60.0
++                            -movement * self.scroll_step
+                         }
+                         mouse::ScrollDelta::Pixels { x, y } => {
+                             -Vector::new(x, y)
+                         }
+                     };
+ 
+-                    state.scroll(
+-                        self.direction.align(delta),
+-                        bounds,
+-                        content_bounds,
+-                    );
++                    if self.smooth_scrolling {
++                        state.queue_smooth_scroll(
++                            self.direction.align(delta),
++                            bounds,
++                            content_bounds,
++                        );
++                        shell.request_redraw();
++                    } else {
++                        state.scroll(
++                            self.direction.align(delta),
++                            bounds,
++                            content_bounds,
++                        );
++                    }
+ 
+                     let has_scrolled = notify_scroll(
+                         state,
+@@ -1002,6 +1026,19 @@
+                     state.keyboard_modifiers = *modifiers;
+                 }
+                 Event::Window(window::Event::RedrawRequested(now)) => {
++                    if self.smooth_scrolling
++                        && state.advance_smooth_scroll(bounds, content_bounds)
++                    {
++                        let _ = notify_scroll(
++                            state,
++                            &self.on_scroll,
++                            bounds,
++                            content_bounds,
++                            shell,
++                        );
++                        shell.request_redraw();
++                    }
++
+                     if let Interaction::AutoScrolling {
+                         origin,
+                         current,
+@@ -1644,6 +1681,7 @@
+     last_notified: Option<Viewport>,
+     last_scrolled: Option<Instant>,
+     is_scrollbar_visible: bool,
++    smooth_target: Option<Vector>,
+ }
+ 
+ #[derive(Debug, Clone, Copy)]
+@@ -1669,6 +1707,7 @@
+             last_notified: None,
+             last_scrolled: None,
+             is_scrollbar_visible: true,
++            smooth_target: None,
+         }
+     }
+ }
+@@ -1783,6 +1822,48 @@
+ }
+ 
+ impl State {
++    fn queue_smooth_scroll(
++        &mut self,
++        delta: Vector,
++        bounds: Rectangle,
++        content_bounds: Rectangle,
++    ) {
++        let current = self.smooth_target.unwrap_or_else(|| {
++            Vector::new(
++                self.offset_x.absolute(bounds.width, content_bounds.width),
++                self.offset_y.absolute(bounds.height, content_bounds.height),
++            )
++        });
++        self.smooth_target = Some(Vector::new(
++            (current.x + delta.x).clamp(0.0, (content_bounds.width - bounds.width).max(0.0)),
++            (current.y + delta.y).clamp(0.0, (content_bounds.height - bounds.height).max(0.0)),
++        ));
++    }
++
++    fn advance_smooth_scroll(
++        &mut self,
++        bounds: Rectangle,
++        content_bounds: Rectangle,
++    ) -> bool {
++        let Some(target) = self.smooth_target else {
++            return false;
++        };
++        let current = Vector::new(
++            self.offset_x.absolute(bounds.width, content_bounds.width),
++            self.offset_y.absolute(bounds.height, content_bounds.height),
++        );
++        let next = current + (target - current) * 0.28;
++        if (target - current).x.abs() < 0.5 && (target - current).y.abs() < 0.5 {
++            self.offset_x = Offset::Absolute(target.x);
++            self.offset_y = Offset::Absolute(target.y);
++            self.smooth_target = None;
++        } else {
++            self.offset_x = Offset::Absolute(next.x);
++            self.offset_y = Offset::Absolute(next.y);
++        }
++        true
++    }
++
+     fn new() -> Self {
+         State::default()
+     }
+Only in b/src/shader: event.rs
+diff -ru a/src/space.rs b/src/space.rs
+--- a/src/space.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/space.rs	2026-08-02 23:13:00.276500277 +0200
+@@ -40,6 +40,16 @@
+         }
+     }
+ 
++    /// Creates horizontal empty space with the given width.
++    pub fn with_width(width: impl Into<Length>) -> Self {
++        Self::new().width(width)
++    }
++
++    /// Creates vertical empty space with the given height.
++    pub fn with_height(height: impl Into<Length>) -> Self {
++        Self::new().height(height)
++    }
++
+     /// Sets the width of the [`Space`].
+     pub fn width(mut self, width: impl Into<Length>) -> Self {
+         self.width = width.into();
+diff -ru a/src/stack.rs b/src/stack.rs
+--- a/src/stack.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/stack.rs	2026-08-02 23:11:46.961254957 +0200
+@@ -103,6 +103,17 @@
+         self
+     }
+ 
++    /// Adds an element on top when present.
++    pub fn push_maybe(
++        self,
++        child: Option<impl Into<Element<'a, Message, Theme, Renderer>>>,
++    ) -> Self {
++        match child {
++            Some(child) => self.push(child),
++            None => self,
++        }
++    }
++
+     /// Adds an element under the [`Stack`].
+     pub fn push_under(
+         mut self,

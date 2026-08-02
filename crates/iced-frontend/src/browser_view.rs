@@ -351,7 +351,7 @@ impl Gui {
             container(
                 row![
                     button(text("Cancel")).on_press(Message::CancelPicker),
-                    Space::with_width(Length::Fill),
+                    Space::new().width(Length::Fill),
                     button(text(selection_label)).on_press(Message::ConfirmPicker),
                 ]
                 .spacing(8),
@@ -413,20 +413,23 @@ impl Gui {
                 let width = (selection.start.x - selection.end.x).abs().max(1.0);
                 let height = (selection.start.y - selection.end.y).abs().max(1.0);
                 container(column![
-                    Space::with_height(top),
+                    Space::new().height(top),
                     row![
-                        Space::with_width(left),
-                        container(Space::new(Length::Fixed(width), Length::Fixed(height))).style(
-                            |theme: &Theme| {
-                                iced::widget::container::Style::default()
-                                    .background(Color::from_rgba8(90, 130, 200, 0.22))
-                                    .border(Border {
-                                        color: theme.palette().primary,
-                                        width: 1.0,
-                                        radius: border_radius().into(),
-                                    })
-                            }
-                        ),
+                        Space::new().width(left),
+                        container(
+                            Space::new()
+                                .width(Length::Fixed(width))
+                                .height(Length::Fixed(height))
+                        )
+                        .style(|theme: &Theme| {
+                            iced::widget::container::Style::default()
+                                .background(Color::from_rgba8(90, 130, 200, 0.22))
+                                .border(Border {
+                                    color: theme.palette().primary,
+                                    width: 1.0,
+                                    radius: border_radius().into(),
+                                })
+                        }),
                     ],
                 ])
                 .width(Length::Fill)
@@ -478,7 +481,7 @@ impl Gui {
         let resize_handle = mouse_area(
             row![
                 Space::with_width(Length::Fixed(12.0)),
-                container(Space::new(Length::Fixed(2.0), Length::Fill))
+                container(Space::new().width(Length::Fixed(2.0)).height(Length::Fill))
                     .width(Length::Fixed(2.0))
                     .height(Length::Fill)
                     .style(|_| {
@@ -824,16 +827,16 @@ impl Gui {
                     self.context_position.y
                 };
                 let menu_position = container(column![
-                    Space::with_height(context_y),
-                    row![Space::with_width(context_x), menu],
+                    Space::new().height(context_y),
+                    row![Space::new().width(context_x), menu],
                 ])
                 .width(Length::Fill)
                 .height(Length::Fill);
                 let blur_position: Element<'_, Message> = if context_menu_blur_strength > 0 {
                     container(column![
-                        Space::with_height(context_y),
+                        Space::new().height(context_y),
                         row![
-                            Space::with_width(context_x),
+                            Space::new().width(context_x),
                             iced::widget::shader::Shader::new(backdrop_blur::BackdropBlur::new(
                                 context_menu_blur_strength,
                                 context_menu_blur_kernel_size,
@@ -846,10 +849,10 @@ impl Gui {
                     .height(Length::Fill)
                     .into()
                 } else {
-                    Space::new(Length::Fill, Length::Fill).into()
+                    Space::new().width(Length::Fill).height(Length::Fill).into()
                 };
                 stack![
-                    mouse_area(Space::new(Length::Fill, Length::Fill))
+                    mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
                         .on_press(Message::CloseFolderContext)
                         .on_right_press(Message::CloseFolderContext),
                     blur_position,
@@ -864,7 +867,7 @@ impl Gui {
 
         let page: Element<'_, Message> = if self.editing_address {
             stack![
-                mouse_area(Space::new(Length::Fill, Length::Fill))
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
                     .on_press(Message::CancelAddressEdit)
                     .on_move(Message::ContextPointerMoved)
                     .on_release(Message::FinishSidebarResize),
@@ -920,7 +923,8 @@ impl Gui {
                     })
             });
             stack![
-                mouse_area(Space::new(Length::Fill, Length::Fill)).on_press(Message::CancelDelete),
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+                    .on_press(Message::CancelDelete),
                 container(dialog)
                     .width(Length::Fill)
                     .height(Length::Fill)
@@ -957,7 +961,7 @@ impl Gui {
                     })
             });
             stack![
-                mouse_area(Space::new(Length::Fill, Length::Fill))
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
                     .on_press(Message::CancelCreateEntry),
                 container(dialog)
                     .width(Length::Fill)
@@ -994,7 +998,7 @@ impl Gui {
                     })
             });
             stack![
-                mouse_area(Space::new(Length::Fill, Length::Fill))
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
                     .on_press(Message::CancelRenameEntry),
                 container(dialog)
                     .width(Length::Fill)
@@ -1065,7 +1069,7 @@ impl Gui {
                     })
             });
             stack![
-                mouse_area(Space::new(Length::Fill, Length::Fill))
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
                     .on_press(Message::CancelCompression),
                 container(dialog)
                     .width(Length::Fill)
@@ -1086,7 +1090,7 @@ impl Gui {
             let info_header = || {
                 row![
                     text("Info").size(20),
-                    Space::with_width(Length::Fill),
+                    Space::new().width(Length::Fill),
                     tooltip(
                         button(icon_text("x")).on_press(Message::CloseEntryInfo),
                         text("Close"),
@@ -1208,17 +1212,16 @@ impl Gui {
                 .height(Length::Fixed(info_dialog_height))
                 .into()
             } else {
-                Space::new(
-                    Length::Fixed(INFO_DIALOG_WIDTH),
-                    Length::Fixed(info_dialog_height),
-                )
-                .into()
+                Space::new()
+                    .width(Length::Fixed(INFO_DIALOG_WIDTH))
+                    .height(Length::Fixed(info_dialog_height))
+                    .into()
             };
             let modal = container(stack![blur, dialog])
                 .width(Length::Fixed(INFO_DIALOG_WIDTH))
                 .height(Length::Fixed(info_dialog_height));
             stack![
-                mouse_area(Space::new(Length::Fill, Length::Fill))
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
                     .on_press(Message::CloseEntryInfo),
                 mouse_area(
                     container(modal)
@@ -1360,7 +1363,7 @@ impl Gui {
                 column![
                     row![
                         text("Last Folder Load").size(20),
-                        Space::with_width(Length::Fill),
+                        Space::new().width(Length::Fill),
                         button(icon_text("copy")).on_press(Message::CopyPerformanceReport),
                         button(icon_text("x")).on_press(Message::TogglePerformanceDebugger),
                     ]
@@ -1399,13 +1402,13 @@ impl Gui {
                 .height(Length::Fixed(640.0))
                 .into()
             } else {
-                Space::new(Length::Fixed(520.0), Length::Fixed(360.0)).into()
+                Space::new().width(Length::Fixed(520.0)).height(Length::Fixed(360.0)).into()
             };
             let modal = container(stack![blur, dialog])
                 .width(Length::Fixed(520.0))
                 .max_height(640.0);
             stack![
-                mouse_area(Space::new(Length::Fill, Length::Fill))
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
                     .on_press(Message::TogglePerformanceDebugger)
                     .on_move(Message::ContextPointerMoved),
                 container(modal)
@@ -1451,7 +1454,8 @@ impl Gui {
                     .opacity(opacity)
                     .into()
             } else {
-                let icon = icon_text(if entry.is_directory { "folder" } else { "file" }).size(size);
+                let icon = icon_text(if entry.is_directory { "folder" } else { "file" })
+                    .size(u32::from(size));
                 if entry.name.starts_with('.') {
                     icon.color(Color::from_rgba8(128, 128, 128, opacity)).into()
                 } else {
@@ -1465,7 +1469,7 @@ impl Gui {
         let badge_edge = (f32::from(size) * 0.24).clamp(10.0, 18.0);
         let badge = container(
             icon_text("link")
-                .size((badge_edge - 4.0).max(7.0) as u16)
+                .size((badge_edge - 4.0).max(7.0))
                 .color(Color::from_rgb8(35, 35, 35)),
         )
         .width(Length::Fixed(badge_edge))
@@ -1549,10 +1553,11 @@ impl Gui {
 
         container(
             stack![
-                mouse_area(Space::new(
-                    Length::Fill,
-                    Length::Fixed(NAVIGATION_CONTROL_HEIGHT),
-                ))
+                mouse_area(
+                    Space::new()
+                        .width(Length::Fill)
+                        .height(Length::Fixed(NAVIGATION_CONTROL_HEIGHT)),
+                )
                 .on_press(Message::StartAddressEdit),
                 breadcrumbs,
             ]
@@ -1606,7 +1611,7 @@ impl Gui {
                             file_item_button_style(theme, status, is_open)
                         })
                         .on_press(Message::SidebarPressed(location.path.clone())),
-                    mouse_area(Space::new(Length::Fill, Length::Fill))
+                    mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
                         .on_press(Message::SidebarPressed(location.path.clone()))
                         .on_release(Message::SidebarReleased(location.path.clone()))
                         .on_right_press(Message::ShowSidebarLocationContext(location.path.clone()))
