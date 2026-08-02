@@ -24,7 +24,8 @@ pub mod proto {
 
 use proto::{
     CreateEntryRequest, DeleteEntriesRequest, FileCommandRequest, ListDirectoryRequest,
-    LogStreamRequest, OpenPathRequest, ThumbnailRequest, file_browser_client::FileBrowserClient,
+    LogStreamRequest, OpenPathRequest, RenameEntryRequest, ThumbnailRequest,
+    file_browser_client::FileBrowserClient,
 };
 
 const BACKEND_MODE_ENV: &str = "IRON_FILE_BACKEND_MODE";
@@ -206,6 +207,41 @@ pub async fn create_entry(
                 .unwrap_or_default()
         })
         .map_err(|error| error.to_string())
+}
+
+pub async fn rename_entry(path: PathBuf, name: String) -> Result<PathBuf, String> {
+    let request = RenameEntryRequest {
+        path: path.display().to_string(),
+        name,
+    };
+    let mut client = connect_or_start().await?;
+    match client.rename_entry(Request::new(request.clone())).await {
+        Ok(response) => Ok(response
+            .into_inner()
+            .copied_paths
+            .into_iter()
+            .next()
+            .map(PathBuf::from)
+            .unwrap_or_default()),
+        Err(error) if error.code() == tonic::Code::Unimplemented => {
+            restart_backend().await?;
+            let mut client = connect_or_start().await?;
+            client
+                .rename_entry(Request::new(request))
+                .await
+                .map(|response| {
+                    response
+                        .into_inner()
+                        .copied_paths
+                        .into_iter()
+                        .next()
+                        .map(PathBuf::from)
+                        .unwrap_or_default()
+                })
+                .map_err(|error| error.to_string())
+        }
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 pub async fn compress_entries(

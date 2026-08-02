@@ -22,6 +22,7 @@ icon_theme = "bundled"
 thumbnail_location = "~/.cache/iron-file/thumbnails"
 file_context_menu_items = [
   "open",
+  "rename",
   "copy-location",
   "copy-selection",
   "delete-selection",
@@ -29,6 +30,7 @@ file_context_menu_items = [
 folder_context_menu_items = [
   "create-folder",
   "create-file",
+  "rename",
   "copy-location",
   "copy-selection",
   "delete-selection",

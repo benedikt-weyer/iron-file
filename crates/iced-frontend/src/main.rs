@@ -33,7 +33,7 @@ use iron_file_common::{
         ContextMenuItem, Profile, QuickToolbarItem, SidebarLocation,
     },
     copy_entries, create_entry, create_symlinks, create_thumbnail, delete_entries, ensure_backend,
-    extract_archives, pipe_backend_logs, proto, restart_backend, stream_directory,
+    extract_archives, pipe_backend_logs, proto, rename_entry, restart_backend, stream_directory,
 };
 use proto::{BrowseResponse, browse_response::Payload};
 use serde::Deserialize;
@@ -355,6 +355,8 @@ struct Gui {
     delete_confirm_selected: bool,
     pending_create: Option<(PathBuf, bool)>,
     create_entry_name: String,
+    pending_rename: Option<PathBuf>,
+    rename_entry_name: String,
     pending_profile_reset: bool,
     pending_compression: bool,
     compression_level: u8,
@@ -537,6 +539,11 @@ enum Message {
     ConfirmCreateEntry,
     CancelCreateEntry,
     EntryCreated(Result<PathBuf, String>),
+    RequestRenameEntry(PathBuf),
+    RenameEntryNameChanged(String),
+    ConfirmRenameEntry,
+    CancelRenameEntry,
+    EntryRenamed(Result<PathBuf, String>),
     ModifiersChanged(keyboard::Modifiers),
     StartRectangleSelection,
     RectanglePointerMoved(Point),
@@ -760,6 +767,8 @@ impl Gui {
             delete_confirm_selected: false,
             pending_create: None,
             create_entry_name: String::new(),
+            pending_rename: None,
+            rename_entry_name: String::new(),
             pending_profile_reset: false,
             pending_compression: false,
             compression_level: 6,
@@ -987,6 +996,48 @@ impl Gui {
                 }
                 Err(error) => {
                     self.status = format!("Create failed: {error}");
+                    Task::none()
+                }
+            },
+            Message::RequestRenameEntry(path) => {
+                self.context_entry = None;
+                self.rename_entry_name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.pending_rename = Some(path);
+                Task::none()
+            }
+            Message::RenameEntryNameChanged(name) => {
+                self.rename_entry_name = name;
+                Task::none()
+            }
+            Message::ConfirmRenameEntry => {
+                let Some(path) = self.pending_rename.take() else {
+                    return Task::none();
+                };
+                let name = self.rename_entry_name.trim().to_owned();
+                if name.is_empty() {
+                    self.pending_rename = Some(path);
+                    self.status = "Enter a name".into();
+                    return Task::none();
+                }
+                self.status = format!("Renaming {}...", path.display());
+                Task::perform(rename_entry(path, name), Message::EntryRenamed)
+            }
+            Message::CancelRenameEntry => {
+                self.pending_rename = None;
+                self.rename_entry_name.clear();
+                Task::none()
+            }
+            Message::EntryRenamed(result) => match result {
+                Ok(path) => {
+                    self.rename_entry_name.clear();
+                    self.status = format!("Renamed to {}", path.display());
+                    self.open_path(self.directory_path.clone())
+                }
+                Err(error) => {
+                    self.status = format!("Rename failed: {error}");
                     Task::none()
                 }
             },
@@ -2936,6 +2987,13 @@ impl Gui {
                         })
                         .into(),
                     ),
+                    ContextMenuItem::Rename => Some(
+                        button(row![icon_text("pencil").size(16), text("Rename")].spacing(8))
+                            .width(Length::Fill)
+                            .style(context_menu_button_style)
+                            .on_press(Message::RequestRenameEntry(entry.path.clone()))
+                            .into(),
+                    ),
                     ContextMenuItem::Open if !entry.is_directory => Some(match &entry.opener {
                         Some(Ok(application)) => button(
                             row![
@@ -3241,6 +3299,43 @@ impl Gui {
             .width(Length::Fill)
             .height(Length::Fill)
         });
+        let rename_dialog = self.pending_rename.as_ref().map(|_| {
+            let dialog = container(
+                column![
+                    text("Rename"),
+                    text_input("Name", &self.rename_entry_name)
+                        .on_input(Message::RenameEntryNameChanged)
+                        .on_submit(Message::ConfirmRenameEntry),
+                    row![
+                        button(text("Cancel")).on_press(Message::CancelRenameEntry),
+                        button(text("Rename")).on_press(Message::ConfirmRenameEntry),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(12),
+            )
+            .padding(16)
+            .style(|theme: &Theme| {
+                iced::widget::container::Style::default()
+                    .background(theme.palette().background)
+                    .border(Border {
+                        color: theme.palette().primary,
+                        width: 1.0,
+                        radius: border_radius().into(),
+                    })
+            });
+            stack![
+                mouse_area(Space::new(Length::Fill, Length::Fill))
+                    .on_press(Message::CancelRenameEntry),
+                container(dialog)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+        });
         let compression_dialog = self.pending_compression.then(|| {
             let dialog = container(
                 column![
@@ -3317,6 +3412,7 @@ impl Gui {
             .push_maybe(overlay)
             .push_maybe(delete_confirmation)
             .push_maybe(create_dialog)
+            .push_maybe(rename_dialog)
             .push_maybe(compression_dialog)
             .width(Length::Fill)
             .height(Length::Fill)

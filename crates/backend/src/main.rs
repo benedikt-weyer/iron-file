@@ -23,7 +23,8 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter, write::FileOptions};
 use proto::{
     BrowseResponse, BrowserError, CreateEntryRequest, DeleteEntriesRequest, Directory,
     FileCommandRequest, FileCommandResponse, FileContent, FileEntry, ListDirectoryRequest,
-    LogEntry, LogStreamRequest, OpenPathRequest, ThumbnailRequest, ThumbnailResponse,
+    LogEntry, LogStreamRequest, OpenPathRequest, RenameEntryRequest, ThumbnailRequest,
+    ThumbnailResponse,
     browse_response::Payload,
     file_browser_server::{FileBrowser, FileBrowserServer},
 };
@@ -202,6 +203,26 @@ impl FileBrowser for FileBrowserService {
         self.log(format!("Created {}", path.display()));
         Ok(Response::new(FileCommandResponse {
             copied_paths: vec![path.display().to_string()],
+        }))
+    }
+
+    async fn rename_entry(
+        &self,
+        request: Request<RenameEntryRequest>,
+    ) -> Result<Response<FileCommandResponse>, Status> {
+        let request = request.into_inner();
+        let path = PathBuf::from(request.path);
+        let renamed = rename_entry(&path, &request.name).map_err(|error| {
+            self.log(format!("Renaming entry failed: {error}"));
+            Status::invalid_argument(error)
+        })?;
+        self.log(format!(
+            "Renamed {} to {}",
+            path.display(),
+            renamed.display()
+        ));
+        Ok(Response::new(FileCommandResponse {
+            copied_paths: vec![renamed.display().to_string()],
         }))
     }
 
@@ -570,15 +591,7 @@ fn create_entry(parent: &Path, name: &str, is_directory: bool) -> Result<PathBuf
     if !parent.is_dir() {
         return Err(format!("{} is not a directory", parent.display()));
     }
-    let name_path = Path::new(name);
-    if name.is_empty()
-        || name == "."
-        || name == ".."
-        || name_path.is_absolute()
-        || name_path.components().count() != 1
-    {
-        return Err("name must be a single non-empty file name".into());
-    }
+    let name_path = single_file_name(name)?;
     let path = parent.join(name_path);
     if is_directory {
         std::fs::create_dir(&path)
@@ -591,6 +604,42 @@ fn create_entry(parent: &Path, name: &str, is_directory: bool) -> Result<PathBuf
     }
     .map_err(|error| format!("could not create {}: {error}", path.display()))?;
     Ok(path)
+}
+
+fn rename_entry(path: &Path, name: &str) -> Result<PathBuf, String> {
+    std::fs::symlink_metadata(path)
+        .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
+    let target = parent.join(single_file_name(name)?);
+    if target == path {
+        return Ok(target);
+    }
+    match std::fs::symlink_metadata(&target) {
+        Ok(_) => return Err(format!("{} already exists", target.display())),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!("could not inspect {}: {error}", target.display()));
+        }
+    }
+    std::fs::rename(path, &target)
+        .map_err(|error| format!("could not rename {}: {error}", path.display()))?;
+    Ok(target)
+}
+
+fn single_file_name(name: &str) -> Result<&Path, String> {
+    let name_path = Path::new(name);
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name_path.is_absolute()
+        || name_path.components().count() != 1
+    {
+        Err("name must be a single non-empty file name".into())
+    } else {
+        Ok(name_path)
+    }
 }
 
 fn available_copy_path(candidate: PathBuf) -> PathBuf {
@@ -905,6 +954,30 @@ mod tests {
         assert!(file.is_file());
         assert!(directory.is_dir());
         assert!(create_entry(&root, "nested/name", false).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rename_entry_renames_files_and_folders_without_overwriting() {
+        let root = std::env::temp_dir().join(format!(
+            "iron-file-rename-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        std::fs::create_dir_all(root.join("folder")).unwrap();
+        let file = root.join("file.txt");
+        std::fs::write(&file, "contents").unwrap();
+
+        let renamed_file = rename_entry(&file, "renamed.txt").unwrap();
+        let renamed_folder = rename_entry(&root.join("folder"), "renamed-folder").unwrap();
+
+        assert_eq!(std::fs::read_to_string(renamed_file).unwrap(), "contents");
+        assert!(renamed_folder.is_dir());
+        assert!(rename_entry(&root.join("renamed.txt"), "nested/name").is_err());
+        assert!(rename_entry(&root.join("renamed.txt"), "renamed-folder").is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 
