@@ -12,6 +12,7 @@ lofty = "0.22"
 iron-file-common = { path = "../common" }
 prost = "0.14"
 sha1 = "0.10"
+stl-thumb = { path = "../../vendor/stl-thumb" }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync"] }
 tokio-stream = { version = "0.1", features = ["net", "sync"] }
 tonic = { version = "0.14", features = ["transport"] }

@@ -13,6 +13,7 @@ use hayro::{hayro_interpret::InterpreterSettings, hayro_syntax::Pdf};
 use image::{DynamicImage, ImageFormat, ImageReader};
 use iron_file_common::{backend_lock_path, proto, socket_path};
 use sha1::{Digest, Sha1};
+use stl_thumb::{config::Config as StlThumbnailConfig, render_to_image};
 use tokio::{
     net::{UnixListener, UnixStream},
     sync::{broadcast, mpsc},
@@ -871,6 +872,10 @@ fn thumbnail_for(path: &Path, directory: &Path) -> Result<ThumbnailOutcome, Stri
     if thumbnail_path.is_file() {
         return Ok(ThumbnailOutcome::Cached(thumbnail_path));
     }
+    if is_three_d_model(path) {
+        write_thumbnail(three_d_model_image(path)?, &thumbnail_path)?;
+        return Ok(ThumbnailOutcome::Generated(thumbnail_path));
+    }
 
     let image = match image_from_path(path).or_else(|| audio_cover_image(path)) {
         Some(image) => image,
@@ -885,6 +890,28 @@ fn is_pdf(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
+}
+
+fn is_three_d_model(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["stl", "obj", "3mf"]
+                .iter()
+                .any(|format| extension.eq_ignore_ascii_case(format))
+        })
+}
+
+fn three_d_model_image(path: &Path) -> Result<DynamicImage, String> {
+    let config = StlThumbnailConfig {
+        model_filename: path.display().to_string(),
+        width: 256,
+        height: 256,
+        ..Default::default()
+    };
+
+    render_to_image(&config)
+        .map_err(|error| format!("could not render 3D model {}: {error}", path.display()))
 }
 
 fn pdf_first_page_image(path: &Path) -> Result<DynamicImage, String> {
@@ -1010,6 +1037,14 @@ mod tests {
         assert!(is_pdf(Path::new("report.pdf")));
         assert!(is_pdf(Path::new("report.PDF")));
         assert!(!is_pdf(Path::new("report.png")));
+    }
+
+    #[test]
+    fn identifies_supported_three_d_model_paths_case_insensitively() {
+        assert!(is_three_d_model(Path::new("model.stl")));
+        assert!(is_three_d_model(Path::new("model.OBJ")));
+        assert!(is_three_d_model(Path::new("model.3mf")));
+        assert!(!is_three_d_model(Path::new("model.ply")));
     }
 
     #[test]

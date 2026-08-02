@@ -1,0 +1,25 @@
+[package]
+name = "stl-thumb"
+version = "0.5.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/unlimitedbacon/stl-thumb"
+autobins = false
+
+[lib]
+name = "stl_thumb"
+path = "src/lib.rs"
+
+[dependencies]
+ahash = "0.8.11"
+cgmath = { version = "0.18.0", features = ["mint"] }
+clap = "4.5.8"
+glium = "0.32"
+image = "0.25.1"
+libc = "0.2"
+log = "0.4.17"
+mint = "0.5.9"
+stl_io = "0.8.0"
+tobj = "4.0.2"
+threemf = "0.6.0"
+winit = "0.30.3"
