@@ -49,6 +49,18 @@ pub struct SidebarLocation {
 pub struct ThemeSettings {
     pub light_highlight: String,
     pub dark_highlight: String,
+    #[serde(default = "default_background_opacity")]
+    pub background_opacity: u8,
+    #[serde(default = "default_border_radius")]
+    pub border_radius: u8,
+}
+
+fn default_background_opacity() -> u8 {
+    100
+}
+
+fn default_border_radius() -> u8 {
+    6
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -625,6 +637,8 @@ mod tests {
         let theme = ThemeSettings {
             light_highlight: "#112233".into(),
             dark_highlight: "#445566".into(),
+            background_opacity: 75,
+            border_radius: 4,
         };
 
         let saved = store.save_theme_settings(&profile, theme.clone()).unwrap();

@@ -7,6 +7,7 @@ use std::{
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     rc::Rc,
+    sync::atomic::{AtomicU8, Ordering},
     time::{Duration, Instant},
 };
 
@@ -15,8 +16,8 @@ use iced::{
     gradient::Linear,
     keyboard, mouse,
     widget::{
-        Space, button, column, container, image, mouse_area, pick_list, radio, responsive, row,
-        scrollable, slider, stack, svg, text, text_input, toggler, tooltip,
+        Space, button as button_style, column, container, image, mouse_area, pick_list, radio,
+        responsive, row, scrollable, slider, stack, svg, text, text_input, toggler, tooltip,
     },
     window,
 };
@@ -32,6 +33,7 @@ use serde::Deserialize;
 use tokio::runtime::Runtime;
 
 const DETACHED_ENV: &str = "IRON_FILE_DETACHED";
+static BORDER_RADIUS: AtomicU8 = AtomicU8::new(6);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut startup = startup_options();
@@ -49,6 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .theme(Gui::theme)
         .subscription(Gui::subscription)
         .window(window::Settings {
+            transparent: true,
             platform_specific: window::settings::PlatformSpecific {
                 // Must match iron-file.desktop so the desktop shell can resolve the dock icon.
                 application_id: "iron-file".into(),
@@ -149,6 +152,42 @@ fn valid_save_file_name(name: &str) -> bool {
         && Path::new(name)
             .components()
             .all(|component| matches!(component, Component::Normal(_)))
+}
+
+fn border_radius() -> f32 {
+    f32::from(BORDER_RADIUS.load(Ordering::Relaxed))
+}
+
+fn set_border_radius(radius: u8) {
+    BORDER_RADIUS.store(radius.min(8), Ordering::Relaxed);
+}
+
+fn button<'a, Message>(
+    content: impl Into<Element<'a, Message>>,
+) -> iced::widget::Button<'a, Message> {
+    iced::widget::button(content).style(rounded_button_style)
+}
+
+fn rounded_button_style(theme: &Theme, status: button_style::Status) -> button_style::Style {
+    let base = button_style::primary(theme, status);
+    button_style::Style {
+        border: Border {
+            radius: border_radius().into(),
+            ..base.border
+        },
+        ..base
+    }
+}
+
+fn rounded_text_button_style(theme: &Theme, status: button_style::Status) -> button_style::Style {
+    let base = button_style::text(theme, status);
+    button_style::Style {
+        border: Border {
+            radius: border_radius().into(),
+            ..base.border
+        },
+        ..base
+    }
 }
 
 fn is_detached() -> bool {
@@ -417,6 +456,8 @@ enum PreferenceOption {
     ColorMode,
     LightAccent,
     DarkAccent,
+    BackgroundOpacity,
+    BorderRadius,
     Layout,
     ItemSize,
     Preview,
@@ -483,6 +524,8 @@ enum Message {
     CancelProfileReset,
     ResetPreference(PreferenceOption),
     ColorModeSelected(ColorMode),
+    BackgroundOpacityChanged(u8),
+    BorderRadiusChanged(u8),
     OpenAccentPicker(bool),
     AccentHueChanged(u16),
     AccentSaturationChanged(u8),
@@ -627,6 +670,7 @@ impl Gui {
             .and_then(|path| profiles.iter().find(|profile| profile.path == path))
             .map(|profile| profile.theme.clone())
             .unwrap_or_else(iron_file_common::config::default_theme_settings);
+        set_border_radius(theme.border_radius);
         Self {
             follow_logs,
             picker,
@@ -941,6 +985,14 @@ impl Gui {
             }
             Message::ColorModeSelected(color_mode) => {
                 self.save_color_mode(color_mode);
+                Task::none()
+            }
+            Message::BackgroundOpacityChanged(opacity) => {
+                self.save_background_opacity(opacity);
+                Task::none()
+            }
+            Message::BorderRadiusChanged(radius) => {
+                self.save_border_radius(radius);
                 Task::none()
             }
             Message::OpenAccentPicker(dark) => {
@@ -1313,6 +1365,9 @@ impl Gui {
         };
         let mut palette = base.palette();
         palette.primary = highlight;
+        palette.background = palette
+            .background
+            .scale_alpha(f32::from(theme_settings.background_opacity.min(100)) / 100.0);
         Theme::custom("Iron File".into(), palette)
     }
 
@@ -1376,6 +1431,10 @@ impl Gui {
                 theme.light_highlight == theme_defaults.light_highlight
             }
             PreferenceOption::DarkAccent => theme.dark_highlight == theme_defaults.dark_highlight,
+            PreferenceOption::BackgroundOpacity => {
+                theme.background_opacity == theme_defaults.background_opacity
+            }
+            PreferenceOption::BorderRadius => theme.border_radius == theme_defaults.border_radius,
             PreferenceOption::Layout => browser.layout == browser_defaults.layout,
             PreferenceOption::ItemSize => browser.item_size == browser_defaults.item_size,
             PreferenceOption::Preview => {
@@ -1819,13 +1878,20 @@ impl Gui {
         let defaults = iron_file_common::config::default_browser_settings();
         match option {
             PreferenceOption::ColorMode => self.save_color_mode(ColorMode::default()),
-            PreferenceOption::LightAccent | PreferenceOption::DarkAccent => {
+            PreferenceOption::LightAccent
+            | PreferenceOption::DarkAccent
+            | PreferenceOption::BackgroundOpacity
+            | PreferenceOption::BorderRadius => {
                 let defaults = iron_file_common::config::default_theme_settings();
                 let mut theme = self.active_theme_settings();
                 if matches!(option, PreferenceOption::LightAccent) {
                     theme.light_highlight = defaults.light_highlight;
-                } else {
+                } else if matches!(option, PreferenceOption::DarkAccent) {
                     theme.dark_highlight = defaults.dark_highlight;
+                } else if matches!(option, PreferenceOption::BackgroundOpacity) {
+                    theme.background_opacity = defaults.background_opacity;
+                } else {
+                    theme.border_radius = defaults.border_radius;
                 }
                 let Some(path) = self.active_profile.clone() else {
                     self.status = "No active configuration profile".into();
@@ -1900,6 +1966,40 @@ impl Gui {
         }
     }
 
+    fn save_background_opacity(&mut self, opacity: u8) {
+        let Some(path) = self.active_profile.clone() else {
+            self.status = "No active configuration profile".into();
+            return;
+        };
+        let Some(profile) = self.profiles.iter().find(|profile| profile.path == path) else {
+            self.status = "The active configuration profile is unavailable".into();
+            return;
+        };
+        let mut theme = profile.theme.clone();
+        theme.background_opacity = opacity;
+        match self.config_store.save_theme_settings(profile, theme) {
+            Ok(saved_profile) => self.apply_saved_profile(saved_profile),
+            Err(error) => self.status = error,
+        }
+    }
+
+    fn save_border_radius(&mut self, radius: u8) {
+        let Some(path) = self.active_profile.clone() else {
+            self.status = "No active configuration profile".into();
+            return;
+        };
+        let Some(profile) = self.profiles.iter().find(|profile| profile.path == path) else {
+            self.status = "The active configuration profile is unavailable".into();
+            return;
+        };
+        let mut theme = profile.theme.clone();
+        theme.border_radius = radius.min(8);
+        match self.config_store.save_theme_settings(profile, theme) {
+            Ok(saved_profile) => self.apply_saved_profile(saved_profile),
+            Err(error) => self.status = error,
+        }
+    }
+
     fn save_sidebar_locations(&mut self, sidebar_locations: Vec<SidebarLocation>) {
         let Some(path) = self.active_profile.clone() else {
             self.status = "No active configuration profile".into();
@@ -1923,6 +2023,7 @@ impl Gui {
         let color_mode = saved_profile.color_mode;
         self.light_accent_input = saved_profile.theme.light_highlight.clone();
         self.dark_accent_input = saved_profile.theme.dark_highlight.clone();
+        set_border_radius(saved_profile.theme.border_radius);
         if let Some(index) = self
             .profiles
             .iter()
@@ -2316,9 +2417,9 @@ impl Gui {
                     }))
                     .style(move |theme, status| {
                         if browser_settings.show_hidden_files {
-                            button::primary(theme, status)
+                            button_style::primary(theme, status)
                         } else {
-                            button::text(theme, status)
+                            button_style::text(theme, status)
                         }
                     })
                     .on_press(Message::ToggleHiddenFiles),
@@ -2443,7 +2544,7 @@ impl Gui {
                                     .border(Border {
                                         color: theme.palette().primary,
                                         width: 1.0,
-                                        radius: 4.0.into(),
+                                        radius: border_radius().into(),
                                     })
                             }
                         ),
@@ -2475,7 +2576,7 @@ impl Gui {
                         .border(Border {
                             color: theme.palette().primary.scale_alpha(0.45),
                             width: 1.0,
-                            radius: 4.0.into(),
+                            radius: border_radius().into(),
                         })
                 }),
         )
@@ -2662,7 +2763,7 @@ impl Gui {
                         .border(Border {
                             color: Color::from_rgba8(128, 128, 128, 0.45),
                             width: 1.0,
-                            radius: 6.0.into(),
+                            radius: border_radius().into(),
                         })
                 });
             let menu_position = container(column![
@@ -2708,18 +2809,18 @@ impl Gui {
                         button(text("Cancel"))
                             .style(move |theme, status| {
                                 if !delete_confirm_selected {
-                                    button::primary(theme, status)
+                                    button_style::primary(theme, status)
                                 } else {
-                                    button::secondary(theme, status)
+                                    button_style::secondary(theme, status)
                                 }
                             })
                             .on_press(Message::CancelDelete),
                         button(text("Delete"))
                             .style(move |theme, status| {
                                 if delete_confirm_selected {
-                                    button::primary(theme, status)
+                                    button_style::primary(theme, status)
                                 } else {
-                                    button::secondary(theme, status)
+                                    button_style::secondary(theme, status)
                                 }
                             })
                             .on_press(Message::ConfirmDelete),
@@ -2735,7 +2836,7 @@ impl Gui {
                     .border(Border {
                         color: theme.palette().primary,
                         width: 1.0,
-                        radius: 6.0.into(),
+                        radius: border_radius().into(),
                     })
             });
             stack![
@@ -2772,7 +2873,7 @@ impl Gui {
                     .border(Border {
                         color: theme.palette().primary,
                         width: 1.0,
-                        radius: 6.0.into(),
+                        radius: border_radius().into(),
                     })
             });
             stack![
@@ -2843,7 +2944,7 @@ impl Gui {
                     .border(Border {
                         color: theme.palette().primary,
                         width: 1.0,
-                        radius: 6.0.into(),
+                        radius: border_radius().into(),
                     })
             });
             stack![
@@ -2916,7 +3017,7 @@ impl Gui {
                 .border(Border {
                     color: Color::from_rgba8(70, 70, 70, 0.7),
                     width: 1.0,
-                    radius: 3.0.into(),
+                    radius: border_radius().into(),
                 })
         });
         stack![
@@ -2973,7 +3074,7 @@ impl Gui {
             };
             breadcrumbs = breadcrumbs.push(
                 button(text(label))
-                    .style(iced::widget::button::text)
+                    .style(rounded_text_button_style)
                     .on_press(Message::OpenPath(target.clone())),
             );
         }
@@ -2986,7 +3087,7 @@ impl Gui {
                 iced::widget::container::Style::default().border(Border {
                     color: theme.extended_palette().background.strong.color,
                     width: 1.0,
-                    radius: 4.0.into(),
+                    radius: border_radius().into(),
                 })
             });
         stack![
@@ -3022,6 +3123,10 @@ impl Gui {
                         iced::widget::container::Style::default()
                             .background(theme.palette().primary)
                             .color(theme.palette().background)
+                            .border(Border {
+                                radius: border_radius().into(),
+                                ..Border::default()
+                            })
                     })
                 } else {
                     item
@@ -3066,7 +3171,7 @@ impl Gui {
                         ]
                         .spacing(8),
                     )
-                    .style(iced::widget::button::text)
+                    .style(rounded_text_button_style)
                     .width(Length::Fill)
                     .on_press(Message::OpenPath(mount.path.clone())),
                 )
@@ -3151,6 +3256,7 @@ impl Gui {
         ]
         .spacing(12);
         let browser = self.active_browser_settings();
+        let theme = self.active_theme_settings();
         let thumbnail_location = browser.thumbnail_location.display().to_string();
         let browser_options = column![
             row![
@@ -3309,6 +3415,30 @@ impl Gui {
                         container(self.accent_picker_button(true)).width(Length::Fill),
                         self.preference_reset_button(PreferenceOption::DarkAccent),
                     ],
+                    row![
+                        text("Background opacity"),
+                        slider(
+                            0..=100,
+                            theme.background_opacity.min(100),
+                            Message::BackgroundOpacityChanged,
+                        )
+                        .width(Length::Fill),
+                        text(format!("{}%", theme.background_opacity.min(100))),
+                        self.preference_reset_button(PreferenceOption::BackgroundOpacity),
+                    ]
+                    .spacing(10),
+                    row![
+                        text("Corner radius"),
+                        slider(
+                            0..=8,
+                            theme.border_radius.min(8),
+                            Message::BorderRadiusChanged,
+                        )
+                        .width(Length::Fill),
+                        text(format!("{} px", theme.border_radius.min(8))),
+                        self.preference_reset_button(PreferenceOption::BorderRadius),
+                    ]
+                    .spacing(10),
                 ]
                 .spacing(10),
                 column![text("Browser").size(18), browser_options].spacing(10),
@@ -3340,7 +3470,7 @@ impl Gui {
                     .border(Border {
                         color: theme.palette().primary,
                         width: 1.0,
-                        radius: 6.0.into(),
+                        radius: border_radius().into(),
                     })
             });
             stack![
@@ -3461,7 +3591,7 @@ impl Gui {
                     .border(Border {
                         color: theme.palette().primary,
                         width: 1.0,
-                        radius: 6.0.into(),
+                        radius: border_radius().into(),
                     })
             });
             stack![
@@ -3586,36 +3716,40 @@ fn icon_theme_directories(theme: &str) -> Vec<PathBuf> {
     directories
 }
 
-fn file_item_button_style(theme: &Theme, status: button::Status, selected: bool) -> button::Style {
-    let base = button::text(theme, status);
-    let style = button::Style {
+fn file_item_button_style(
+    theme: &Theme,
+    status: button_style::Status,
+    selected: bool,
+) -> button_style::Style {
+    let base = button_style::text(theme, status);
+    let style = button_style::Style {
         border: Border {
-            radius: 6.0.into(),
+            radius: border_radius().into(),
             ..base.border
         },
         ..base
     };
     if selected {
-        button::Style {
+        button_style::Style {
             text_color: theme.palette().background,
             ..style.with_background(theme.palette().primary)
         }
-    } else if matches!(status, button::Status::Hovered) {
+    } else if matches!(status, button_style::Status::Hovered) {
         style.with_background(Color::from_rgba8(128, 128, 128, 0.18))
     } else {
         style
     }
 }
 
-fn context_menu_button_style(theme: &Theme, status: button::Status) -> button::Style {
-    let style = button::Style {
+fn context_menu_button_style(theme: &Theme, status: button_style::Status) -> button_style::Style {
+    let style = button_style::Style {
         border: Border {
-            radius: 4.0.into(),
-            ..button::text(theme, status).border
+            radius: border_radius().into(),
+            ..button_style::text(theme, status).border
         },
-        ..button::text(theme, status)
+        ..button_style::text(theme, status)
     };
-    if matches!(status, button::Status::Hovered) {
+    if matches!(status, button_style::Status::Hovered) {
         style.with_background(Color::from_rgba8(128, 128, 128, 0.18))
     } else {
         style
