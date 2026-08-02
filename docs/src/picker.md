@@ -24,6 +24,10 @@ cancelled picker exits without selected paths.
 | `--multiple`, `--multi` | Accept multiple locations. |
 
 ```sh
+# Open the current directory or a relative location.
+iron-file .
+iron-file ./Documents
+
 # Pick multiple files starting in Downloads.
 iron-file-iced ~/Downloads --mode picker --file --multiple
 

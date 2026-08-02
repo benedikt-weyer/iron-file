@@ -34,7 +34,8 @@ use tokio::runtime::Runtime;
 const DETACHED_ENV: &str = "IRON_FILE_DETACHED";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let startup = startup_options();
+    let mut startup = startup_options();
+    startup.initial_path = startup.initial_path.map(resolve_initial_path);
     if !startup.follow_logs && startup.picker.is_none() && !is_detached() {
         detach()?;
         return Ok(());
@@ -124,6 +125,20 @@ fn parse_startup_options(arguments: impl IntoIterator<Item = OsString>) -> Start
     options
 }
 
+fn resolve_initial_path(path: PathBuf) -> PathBuf {
+    let current_directory = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    resolve_path_from(path, current_directory)
+}
+
+fn resolve_path_from(path: PathBuf, current_directory: PathBuf) -> PathBuf {
+    let path = if path.is_absolute() {
+        path
+    } else {
+        current_directory.join(path)
+    };
+    fs::canonicalize(&path).unwrap_or(path)
+}
+
 fn is_detached() -> bool {
     env::var_os(DETACHED_ENV).is_some()
 }
@@ -173,6 +188,22 @@ mod startup_tests {
                 multiple: true,
             })
         );
+    }
+
+    #[test]
+    fn accepts_current_and_relative_locations() {
+        let current = parse_startup_options(["."].map(OsString::from));
+        let relative = parse_startup_options(["./Documents"].map(OsString::from));
+
+        assert_eq!(current.initial_path, Some(PathBuf::from(".")));
+        assert_eq!(relative.initial_path, Some(PathBuf::from("./Documents")));
+    }
+
+    #[test]
+    fn resolves_relative_locations_from_the_invoking_directory() {
+        let location = resolve_path_from(PathBuf::from("."), PathBuf::from("/tmp"));
+
+        assert_eq!(location, PathBuf::from("/tmp"));
     }
 }
 
