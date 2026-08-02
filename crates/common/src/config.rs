@@ -285,14 +285,16 @@ impl fmt::Display for ContextMenuItem {
 pub enum QuickToolbarItem {
     ToggleHiddenFiles,
     Sort,
+    FolderSort,
     CompressSelection,
     ExtractSelection,
 }
 
 impl QuickToolbarItem {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::ToggleHiddenFiles,
         Self::Sort,
+        Self::FolderSort,
         Self::CompressSelection,
         Self::ExtractSelection,
     ];
@@ -303,6 +305,12 @@ impl QuickToolbarItem {
 pub enum EntrySortOrder {
     NameAscending,
     NameDescending,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FolderSortOverride {
+    pub path: PathBuf,
+    pub sort_order: EntrySortOrder,
 }
 
 impl EntrySortOrder {
@@ -347,6 +355,7 @@ impl fmt::Display for QuickToolbarItem {
         formatter.write_str(match self {
             Self::ToggleHiddenFiles => "Show hidden files",
             Self::Sort => "Sort entries",
+            Self::FolderSort => "Override folder sorting",
             Self::CompressSelection => "Compress selection",
             Self::ExtractSelection => "Extract selection",
         })
@@ -379,6 +388,8 @@ pub struct BrowserSettings {
     pub quick_toolbar_items: Vec<QuickToolbarItem>,
     #[serde(default = "default_entry_sort_order")]
     pub sort_order: EntrySortOrder,
+    #[serde(default)]
+    pub folder_sort_overrides: Vec<FolderSortOverride>,
     #[serde(default = "default_keyboard_shortcuts")]
     pub keyboard_shortcuts: Vec<KeyboardShortcut>,
     #[serde(default, rename = "context_menu_items", skip_serializing)]
@@ -996,6 +1007,29 @@ mod tests {
                 QuickToolbarItem::ExtractSelection,
                 QuickToolbarItem::ToggleHiddenFiles,
             ]
+        );
+    }
+
+    #[test]
+    fn reads_folder_sort_overrides() {
+        let profile: ProfileFile = toml::from_str(
+            r##"
+                [browser]
+                item_size = 32
+                layout = "list"
+                folder_sort_overrides = [
+                  { path = "/tmp/example", sort_order = "name-descending" },
+                ]
+            "##,
+        )
+        .unwrap();
+
+        assert_eq!(
+            profile.browser.unwrap().folder_sort_overrides,
+            vec![FolderSortOverride {
+                path: PathBuf::from("/tmp/example"),
+                sort_order: EntrySortOrder::NameDescending,
+            }]
         );
     }
 

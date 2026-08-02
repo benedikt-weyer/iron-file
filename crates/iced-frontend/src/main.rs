@@ -30,8 +30,8 @@ use iron_file_common::{
     browse_with_thumbnails, compress_entries,
     config::{
         BrowserLayout, BrowserSettings, ColorMode, ConfigStore, ContextMenuBlurKernelSize,
-        ContextMenuItem, EntrySortOrder, KeyboardShortcutAction, Profile, QuickToolbarItem,
-        SidebarLocation,
+        ContextMenuItem, EntrySortOrder, FolderSortOverride, KeyboardShortcutAction, Profile,
+        QuickToolbarItem, SidebarLocation,
     },
     copy_entries, create_entry, create_symlinks, create_thumbnail, delete_entries, ensure_backend,
     extract_archives, pipe_backend_logs, proto, rename_entry, restart_backend, stream_directory,
@@ -461,6 +461,45 @@ enum SelectionDirection {
     Down,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FolderSortSelection {
+    None,
+    NameAscending,
+    NameDescending,
+}
+
+impl FolderSortSelection {
+    const ALL: [Self; 3] = [Self::None, Self::NameAscending, Self::NameDescending];
+
+    fn sort_order(self) -> Option<EntrySortOrder> {
+        match self {
+            Self::None => None,
+            Self::NameAscending => Some(EntrySortOrder::NameAscending),
+            Self::NameDescending => Some(EntrySortOrder::NameDescending),
+        }
+    }
+}
+
+impl From<Option<EntrySortOrder>> for FolderSortSelection {
+    fn from(order: Option<EntrySortOrder>) -> Self {
+        match order {
+            None => Self::None,
+            Some(EntrySortOrder::NameAscending) => Self::NameAscending,
+            Some(EntrySortOrder::NameDescending) => Self::NameDescending,
+        }
+    }
+}
+
+impl std::fmt::Display for FolderSortSelection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::None => "Folder: None",
+            Self::NameAscending => "Folder: Name (A-Z)",
+            Self::NameDescending => "Folder: Name (Z-A)",
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum PasteMode {
     Copy,
@@ -595,6 +634,7 @@ enum Message {
     QuickToolbarItemToggled(QuickToolbarItem, bool),
     MoveQuickToolbarItem(QuickToolbarItem, bool),
     SortOrderSelected(EntrySortOrder),
+    FolderSortOverrideSelected(FolderSortSelection),
     KeyboardShortcutChanged {
         action: KeyboardShortcutAction,
         key: String,
@@ -1243,8 +1283,15 @@ impl Gui {
             Message::SortOrderSelected(sort_order) => {
                 let mut browser = self.active_browser_settings();
                 browser.sort_order = sort_order;
-                sort_entries(&mut self.entries, sort_order);
+                let effective_sort_order = self
+                    .folder_sort_override(&self.directory_path)
+                    .unwrap_or(sort_order);
+                sort_entries(&mut self.entries, effective_sort_order);
                 self.save_browser_settings(browser);
+                Task::none()
+            }
+            Message::FolderSortOverrideSelected(selection) => {
+                self.save_folder_sort_override(selection.sort_order());
                 Task::none()
             }
             Message::KeyboardShortcutChanged { action, key } => {
@@ -1593,7 +1640,7 @@ impl Gui {
                 self.entry_icons
                     .insert(path.clone(), themed_entry_icon_path(&icon_theme, &entry));
                 let is_directory = entry.is_directory;
-                let sort_order = self.active_browser_settings().sort_order;
+                let sort_order = self.current_sort_order();
                 self.entries.push(entry);
                 sort_entries(&mut self.entries, sort_order);
                 self.status = format!("{} entries", self.entries.len());
@@ -1753,6 +1800,19 @@ impl Gui {
             .and_then(|path| self.profiles.iter().find(|profile| profile.path == path))
             .map(|profile| profile.browser.clone())
             .unwrap_or_else(iron_file_common::config::default_browser_settings)
+    }
+
+    fn folder_sort_override(&self, path: &Path) -> Option<EntrySortOrder> {
+        self.active_browser_settings()
+            .folder_sort_overrides
+            .into_iter()
+            .find(|override_| override_.path == path)
+            .map(|override_| override_.sort_order)
+    }
+
+    fn current_sort_order(&self) -> EntrySortOrder {
+        self.folder_sort_override(&self.directory_path)
+            .unwrap_or_else(|| self.active_browser_settings().sort_order)
     }
 
     fn sidebar_width(&self) -> u16 {
@@ -2450,6 +2510,21 @@ impl Gui {
         self.save_browser_settings(browser);
     }
 
+    fn save_folder_sort_override(&mut self, sort_order: Option<EntrySortOrder>) {
+        let path = self.directory_path.clone();
+        let mut browser = self.active_browser_settings();
+        browser
+            .folder_sort_overrides
+            .retain(|override_| override_.path != path);
+        if let Some(sort_order) = sort_order {
+            browser
+                .folder_sort_overrides
+                .push(FolderSortOverride { path, sort_order });
+        }
+        sort_entries(&mut self.entries, sort_order.unwrap_or(browser.sort_order));
+        self.save_browser_settings(browser);
+    }
+
     fn save_keyboard_shortcut(&mut self, action: KeyboardShortcutAction, key: String) {
         let mut browser = self.active_browser_settings();
         browser
@@ -2916,6 +2991,19 @@ impl Gui {
                     Message::SortOrderSelected,
                 )
                 .width(Length::Fixed(150.0))
+                .style(rounded_pick_list_style)
+                .menu_style(rounded_pick_list_menu_style)
+                .into(),
+                QuickToolbarItem::FolderSort => pick_list(
+                    FolderSortSelection::ALL,
+                    Some(FolderSortSelection::from(
+                        self.folder_sort_override(&self.directory_path),
+                    )),
+                    Message::FolderSortOverrideSelected,
+                )
+                .width(Length::Fixed(180.0))
+                .style(rounded_pick_list_style)
+                .menu_style(rounded_pick_list_menu_style)
                 .into(),
                 QuickToolbarItem::CompressSelection => tooltip(
                     button(icon_text("archive")).on_press_maybe(has_selection.then_some(
@@ -3994,7 +4082,9 @@ impl Gui {
                     Message::IconThemeSelected,
                 )
                 .placeholder("Icon theme")
-                .width(Length::Fill),
+                .width(Length::Fill)
+                .style(rounded_pick_list_style)
+                .menu_style(rounded_pick_list_menu_style),
                 self.preference_reset_button(PreferenceOption::IconTheme),
             ],
             row![
@@ -4010,7 +4100,9 @@ impl Gui {
                         Some(self.selected_terminal_choice(&browser)),
                         Message::TerminalChoiceSelected,
                     )
-                    .width(Length::Fill),
+                    .width(Length::Fill)
+                    .style(rounded_pick_list_style)
+                    .menu_style(rounded_pick_list_menu_style),
                     text_input(
                         "Custom terminal command",
                         (self.selected_terminal_choice(&browser) == CUSTOM_TERMINAL_CHOICE)
@@ -4275,7 +4367,9 @@ impl Gui {
                                 Some(theme.context_menu_blur_kernel_size),
                                 Message::ContextMenuBlurKernelSizeChanged,
                             )
-                            .width(Length::Fill),
+                            .width(Length::Fill)
+                            .style(rounded_pick_list_style)
+                            .menu_style(rounded_pick_list_menu_style),
                             self.preference_reset_button(
                                 PreferenceOption::ContextMenuBlurKernelSize
                             ),
@@ -4718,6 +4812,46 @@ fn modern_vertical_scrollbar() -> iced::widget::scrollable::Direction {
             .scroller_width(5.0)
             .margin(2.0),
     )
+}
+
+fn rounded_pick_list_style(
+    theme: &Theme,
+    status: iced::widget::pick_list::Status,
+) -> iced::widget::pick_list::Style {
+    let palette = theme.extended_palette();
+    iced::widget::pick_list::Style {
+        text_color: palette.background.weak.text,
+        placeholder_color: palette.background.strong.color,
+        handle_color: palette.background.weak.text,
+        background: Color::from_rgba8(128, 128, 128, 0.12).into(),
+        border: Border {
+            color: if matches!(
+                status,
+                iced::widget::pick_list::Status::Hovered | iced::widget::pick_list::Status::Opened
+            ) {
+                theme.palette().primary
+            } else {
+                palette.background.strong.color.scale_alpha(0.6)
+            },
+            width: 1.0,
+            radius: border_radius().into(),
+        },
+    }
+}
+
+fn rounded_pick_list_menu_style(theme: &Theme) -> iced::widget::overlay::menu::Style {
+    let palette = theme.extended_palette();
+    iced::widget::overlay::menu::Style {
+        background: palette.background.base.color.into(),
+        border: Border {
+            color: palette.background.strong.color.scale_alpha(0.7),
+            width: 1.0,
+            radius: border_radius().into(),
+        },
+        text_color: palette.background.base.text,
+        selected_text_color: contrasting_text_color(theme.palette().primary),
+        selected_background: theme.palette().primary.into(),
+    }
 }
 
 fn sidebar_icon(location: &SidebarLocation) -> &'static str {

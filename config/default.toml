@@ -43,10 +43,12 @@ folder_context_menu_items = [
 quick_toolbar_items = [
   "toggle-hidden-files",
   "sort",
+  "folder-sort",
   "compress-selection",
   "extract-selection",
 ]
 sort_order = "name-ascending"
+folder_sort_overrides = []
 keyboard_shortcuts = [
   { action = "rename-selection", key = "F2" },
 ]

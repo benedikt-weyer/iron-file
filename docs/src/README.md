@@ -35,8 +35,10 @@ apply to the selected file or folder are hidden automatically. The legacy
 
 The `[browser]` `quick_toolbar_items` array controls the visible quick-toolbar
 actions and their order. Available values are `"toggle-hidden-files"`,
-`"sort"`, `"compress-selection"`, and `"extract-selection"`. The
+`"sort"`, `"folder-sort"`, `"compress-selection"`, and `"extract-selection"`. The
 `sort_order` setting selects `"name-ascending"` or `"name-descending"`.
+The `"folder-sort"` control stores per-folder entries in
+`folder_sort_overrides`; its default is `None`, which uses `sort_order`.
 
 The `[browser]` `keyboard_shortcuts` array maps actions to keys. Its default
 binding is `{ action = "rename-selection", key = "F2" }`. Set `key` to an
