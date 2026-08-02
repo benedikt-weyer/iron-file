@@ -925,17 +925,32 @@ impl Gui {
         let info_dialog = self.pending_info.as_ref().map(|dialog_state| {
             const INFO_DIALOG_WIDTH: f32 = 460.0;
             const INFO_DIALOG_MIN_HEIGHT: f32 = 180.0;
-            const INFO_DIALOG_MAX_HEIGHT: f32 = 400.0;
+            const INFO_DIALOG_MAX_HEIGHT: f32 = 640.0;
+            const INFO_DIALOG_CHROME_HEIGHT: f32 = 152.0;
+            const INFO_ROW_HEIGHT: f32 = 28.0;
+            let info_header = || {
+                row![
+                    text("Info").size(20),
+                    Space::with_width(Length::Fill),
+                    tooltip(
+                        button(icon_text("x")).on_press(Message::CloseEntryInfo),
+                        text("Close"),
+                        tooltip::Position::Bottom,
+                    ),
+                ]
+                .align_y(iced::alignment::Vertical::Center)
+            };
             let info_dialog_height = match dialog_state {
                 InfoDialog::Loading(_) => INFO_DIALOG_MIN_HEIGHT,
                 InfoDialog::Error { .. } => 220.0,
-                InfoDialog::Loaded(info) => (152.0 + info.rows.len() as f32 * 28.0)
+                InfoDialog::Loaded(info) => (INFO_DIALOG_CHROME_HEIGHT
+                    + info.rows.len() as f32 * INFO_ROW_HEIGHT)
                     .clamp(INFO_DIALOG_MIN_HEIGHT, INFO_DIALOG_MAX_HEIGHT),
             };
             let dialog: Element<'_, Message> = match dialog_state {
                 InfoDialog::Loading(path) => container(
                     column![
-                        text("Info").size(20),
+                        info_header(),
                         text(path.display().to_string()),
                         text("Loading details..."),
                     ]
@@ -945,6 +960,7 @@ impl Gui {
                 .padding(16)
                 .into(),
                 InfoDialog::Loaded(info) => {
+                    let rows_height = info.rows.len() as f32 * INFO_ROW_HEIGHT;
                     let rows =
                         info.rows
                             .iter()
@@ -957,32 +973,26 @@ impl Gui {
                                     .spacing(12),
                                 )
                             });
-                    container(
-                        column![
-                            text("Info").size(20),
-                            text(&info.name),
+                    let details: Element<'_, Message> =
+                        if rows_height > INFO_DIALOG_MAX_HEIGHT - INFO_DIALOG_CHROME_HEIGHT {
                             scrollable(rows)
-                                .height(Length::Fixed((info_dialog_height - 128.0).max(52.0))),
-                            row![
-                                Space::with_width(Length::Fill),
-                                button(text("Close")).on_press(Message::CloseEntryInfo)
-                            ],
-                        ]
-                        .spacing(12),
-                    )
-                    .width(Length::Fixed(INFO_DIALOG_WIDTH))
-                    .padding(16)
-                    .into()
+                                .height(Length::Fixed(
+                                    INFO_DIALOG_MAX_HEIGHT - INFO_DIALOG_CHROME_HEIGHT,
+                                ))
+                                .into()
+                        } else {
+                            rows.into()
+                        };
+                    container(column![info_header(), text(&info.name), details,].spacing(12))
+                        .width(Length::Fixed(INFO_DIALOG_WIDTH))
+                        .padding(16)
+                        .into()
                 }
                 InfoDialog::Error { path, error } => container(
                     column![
-                        text("Info").size(20),
+                        info_header(),
                         text(path.display().to_string()),
                         text(format!("Unable to read details: {error}")),
-                        row![
-                            Space::with_width(Length::Fill),
-                            button(text("Close")).on_press(Message::CloseEntryInfo)
-                        ],
                     ]
                     .spacing(12),
                 )
