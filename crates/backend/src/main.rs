@@ -1098,7 +1098,7 @@ fn write_video_thumbnail(path: &Path, thumbnail_path: &Path) -> Result<(), Strin
     let temporary_path = thumbnail_path.with_extension("tmp.png");
     let ffmpeg = std::env::var_os("IRON_FILE_FFMPEG").unwrap_or_else(|| "ffmpeg".into());
     let status = Command::new(ffmpeg)
-        .args(["-v", "error", "-y", "-ss", "00:00:01", "-i"])
+        .args(["-v", "error", "-y", "-ss", "00:00:00", "-i"])
         .arg(path)
         .args([
             "-frames:v",
