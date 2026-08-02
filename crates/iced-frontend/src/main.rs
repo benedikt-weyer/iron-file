@@ -3064,27 +3064,26 @@ impl Gui {
                             .on_press(Message::RequestRenameEntry(entry.path.clone()))
                             .into(),
                     ),
-                    ContextMenuItem::Open if !entry.is_directory => Some(match &entry.opener {
-                        Some(Ok(application)) => button(
+                    ContextMenuItem::Open if !entry.is_directory => Some(
+                        button(
                             row![
                                 icon_text("external-link").size(16),
-                                text(format!("Open (with {application})"))
+                                text(
+                                    entry
+                                        .opener
+                                        .as_ref()
+                                        .and_then(|opener| opener.as_ref().ok())
+                                        .map(|application| format!("Open (with {application})"))
+                                        .unwrap_or_else(|| "Open".into()),
+                                )
                             ]
                             .spacing(8),
                         )
                         .width(Length::Fill)
                         .style(context_menu_button_style)
-                        .on_press(Message::OpenContextFile)
+                        .on_press_maybe(entry.opener.is_some().then_some(Message::OpenContextFile))
                         .into(),
-                        Some(Err(_)) => button(
-                            row![icon_text("external-link").size(16), text("Open")].spacing(8),
-                        )
-                        .width(Length::Fill)
-                        .style(context_menu_button_style)
-                        .on_press(Message::OpenContextFile)
-                        .into(),
-                        None => text("Finding default application...").into(),
-                    }),
+                    ),
                     ContextMenuItem::CopyLocation => Some(
                         button(row![icon_text("copy").size(16), text("Copy location")].spacing(8))
                             .width(Length::Fill)
