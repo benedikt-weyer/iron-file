@@ -1336,14 +1336,10 @@ impl Gui {
                 let item = container(
                     row![
                         icon_text(sidebar_icon(&location)),
-                        tooltip(
-                            text(truncate_label(&label, 24))
-                                .width(Length::Fill)
-                                .height(Length::Fixed(20.0))
-                                .wrapping(Wrapping::None),
-                            text(label),
-                            tooltip::Position::Bottom,
-                        )
+                        text(truncate_label(&label, 24))
+                            .width(Length::Fill)
+                            .height(Length::Fixed(20.0))
+                            .wrapping(Wrapping::None)
                     ]
                     .spacing(8)
                     .align_y(iced::alignment::Vertical::Top),
