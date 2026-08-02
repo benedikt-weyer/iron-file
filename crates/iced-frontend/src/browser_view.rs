@@ -16,23 +16,17 @@ fn name_label(
     name: &str,
     line_characters: usize,
     max_lines: usize,
-    line_height: f32,
+    _line_height: f32,
     alignment: iced::alignment::Horizontal,
 ) -> Element<'_, Message> {
-    let lines = name_label_lines(name, line_characters, max_lines);
-
-    lines
-        .into_iter()
-        .fold(column![], |column, line| {
-            column.push(
-                text(line)
-                    .width(Length::Fill)
-                    .height(Length::Fixed(line_height))
-                    .align_x(alignment),
-            )
-        })
-        .width(Length::Fill)
-        .into()
+    text(truncate_label(
+        name,
+        line_characters.saturating_mul(max_lines),
+    ))
+    .width(Length::Fill)
+    .wrapping(Wrapping::Glyph)
+    .align_x(alignment)
+    .into()
 }
 
 impl Gui {

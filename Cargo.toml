@@ -14,5 +14,6 @@ edition = "2024"
 license = "MIT"
 
 [patch.crates-io]
+iced_graphics = { path = "vendor/iced-graphics" }
 iced_wgpu = { path = "vendor/iced-wgpu" }
 iced_widget = { path = "vendor/iced-widget" }

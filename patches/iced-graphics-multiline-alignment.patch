@@ -1,0 +1,71 @@
+--- a/src/text/paragraph.rs
++++ b/src/text/paragraph.rs
+@@ -8,6 +8,24 @@
+ use std::fmt;
+ use std::sync::{self, Arc};
+
++fn apply_line_alignment(
++    buffer: &mut cosmic_text::Buffer,
++    font_system: &mut cosmic_text::FontSystem,
++    alignment: alignment::Horizontal,
++) {
++    let alignment = match alignment {
++        alignment::Horizontal::Left => None,
++        alignment::Horizontal::Center => Some(cosmic_text::Align::Center),
++        alignment::Horizontal::Right => Some(cosmic_text::Align::Right),
++    };
++
++    for line in &mut buffer.lines {
++        let _ = line.set_align(alignment);
++    }
++
++    buffer.shape_until_scroll(font_system, false);
++}
++
+ /// A bunch of text.
+ #[derive(Clone, PartialEq)]
+ pub struct Paragraph(Arc<Internal>);
+@@ -47,7 +65,7 @@
+         Weak {
+             raw: Arc::downgrade(paragraph),
+             min_bounds: paragraph.min_bounds,
+-            horizontal_alignment: paragraph.horizontal_alignment,
++            horizontal_alignment: alignment::Horizontal::Left,
+             vertical_alignment: paragraph.vertical_alignment,
+         }
+     }
+@@ -87,6 +105,12 @@
+             text::to_shaping(text.shaping),
+         );
+ 
++        apply_line_alignment(
++            &mut buffer,
++            font_system.raw(),
++            text.horizontal_alignment,
++        );
++
+         let min_bounds = text::measure(&buffer);
+ 
+         Self(Arc::new(Internal {
+@@ -154,6 +178,12 @@
+             text::to_shaping(text.shaping),
+         );
+ 
++        apply_line_alignment(
++            &mut buffer,
++            font_system.raw(),
++            text.horizontal_alignment,
++        );
++
+         let min_bounds = text::measure(&buffer);
+ 
+         Self(Arc::new(Internal {
+@@ -208,7 +238,7 @@
+     }
+ 
+     fn horizontal_alignment(&self) -> alignment::Horizontal {
+-        self.internal().horizontal_alignment
++        alignment::Horizontal::Left
+     }
+ 
+     fn vertical_alignment(&self) -> alignment::Vertical {
