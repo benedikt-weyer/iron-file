@@ -757,6 +757,7 @@ enum Message {
     ContextPointerMoved(Point),
     CloseFolderContext,
     TogglePerformanceDebugger,
+    CopyPerformanceReport,
     RequestEntryInfo(PathBuf),
     EntryInfoLoaded {
         path: PathBuf,
@@ -1670,6 +1671,37 @@ impl Gui {
             Message::TogglePerformanceDebugger => {
                 self.show_performance_debugger = !self.show_performance_debugger;
                 Task::none()
+            }
+            Message::CopyPerformanceReport => {
+                let Some(load) = &self.folder_load_performance else {
+                    self.status = "No folder-load performance data to copy".into();
+                    return Task::none();
+                };
+                let displayed_ms = load
+                    .displayed_at
+                    .map(|at| at.duration_since(load.started_at).as_millis())
+                    .unwrap_or_default();
+                let thumbnails_ms = load
+                    .thumbnails_settled_at
+                    .map(|at| at.duration_since(load.started_at).as_millis())
+                    .unwrap_or_default();
+                self.status = "Copied performance report to the clipboard".into();
+                iced::clipboard::write(format!(
+                    "Folder load: {}\nBrowse response: {} ms\nBackend enumeration: {} ms\nFirst item rendered: {} ms\nAll items displayed: {} ms\nAll thumbnails loaded: {} ms ({}/{})\nEntries: {}",
+                    self.directory_path.display(),
+                    self.last_folder_load_duration
+                        .map(|duration| duration.as_millis())
+                        .unwrap_or_default(),
+                    load.enumeration_ms.unwrap_or_default(),
+                    load.first_item_at
+                        .map(|at| at.duration_since(load.started_at).as_millis())
+                        .unwrap_or_default(),
+                    displayed_ms,
+                    thumbnails_ms,
+                    load.thumbnails_settled,
+                    load.thumbnails_total,
+                    load.expected_entries
+                ))
             }
             Message::RequestEntryInfo(path) => {
                 self.context_entry = None;

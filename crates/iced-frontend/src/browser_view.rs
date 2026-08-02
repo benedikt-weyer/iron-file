@@ -1312,6 +1312,7 @@ impl Gui {
                     row![
                         text("Last Folder Load").size(20),
                         Space::with_width(Length::Fill),
+                        button(icon_text("copy")).on_press(Message::CopyPerformanceReport),
                         button(icon_text("x")).on_press(Message::TogglePerformanceDebugger),
                     ]
                     .align_y(iced::alignment::Vertical::Center),
