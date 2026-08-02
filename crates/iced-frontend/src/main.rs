@@ -4276,13 +4276,32 @@ fn file_item_button_style(
     };
     if selected {
         button_style::Style {
-            text_color: theme.palette().background,
+            text_color: contrasting_text_color(theme.palette().primary),
             ..style.with_background(theme.palette().primary)
         }
     } else if matches!(status, button_style::Status::Hovered) {
         style.with_background(Color::from_rgba8(128, 128, 128, 0.18))
     } else {
         style
+    }
+}
+
+fn contrasting_text_color(background: Color) -> Color {
+    let linear_channel = |channel: f32| {
+        if channel <= 0.04045 {
+            channel / 12.92
+        } else {
+            ((channel + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let luminance = 0.2126 * linear_channel(background.r)
+        + 0.7152 * linear_channel(background.g)
+        + 0.0722 * linear_channel(background.b);
+
+    if luminance > 0.179 {
+        Color::BLACK
+    } else {
+        Color::WHITE
     }
 }
 
