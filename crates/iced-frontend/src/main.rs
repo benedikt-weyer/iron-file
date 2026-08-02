@@ -453,6 +453,14 @@ enum BrowserCommand {
 }
 
 #[derive(Debug, Clone, Copy)]
+enum SelectionDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+#[derive(Debug, Clone, Copy)]
 enum PasteMode {
     Copy,
     Symlink,
@@ -540,6 +548,7 @@ enum Message {
     CancelDelete,
     SelectDeleteDialogAction(bool),
     ActivateDeleteDialogAction,
+    ArrowKeyPressed(SelectionDirection),
     FileDeleteFinished(Result<Vec<PathBuf>, String>),
     RequestCreateEntry {
         parent: PathBuf,
@@ -680,14 +689,31 @@ impl Gui {
                 }
             }
             iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
-                if key == keyboard::Key::Named(keyboard::key::Named::ArrowLeft) =>
+                if matches!(
+                    key.as_ref(),
+                    keyboard::Key::Named(
+                        keyboard::key::Named::ArrowLeft
+                            | keyboard::key::Named::ArrowRight
+                            | keyboard::key::Named::ArrowUp
+                            | keyboard::key::Named::ArrowDown
+                    )
+                ) =>
             {
-                Some(Message::SelectDeleteDialogAction(false))
-            }
-            iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
-                if key == keyboard::Key::Named(keyboard::key::Named::ArrowRight) =>
-            {
-                Some(Message::SelectDeleteDialogAction(true))
+                match key.as_ref() {
+                    keyboard::Key::Named(keyboard::key::Named::ArrowLeft) => {
+                        Some(Message::ArrowKeyPressed(SelectionDirection::Left))
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::ArrowRight) => {
+                        Some(Message::ArrowKeyPressed(SelectionDirection::Right))
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
+                        Some(Message::ArrowKeyPressed(SelectionDirection::Up))
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
+                        Some(Message::ArrowKeyPressed(SelectionDirection::Down))
+                    }
+                    _ => unreachable!(),
+                }
             }
             iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
                 if key == keyboard::Key::Named(keyboard::key::Named::Enter) =>
@@ -957,6 +983,22 @@ impl Gui {
                         self.update(Message::CancelDelete)
                     }
                 } else {
+                    Task::none()
+                }
+            }
+            Message::ArrowKeyPressed(direction) => {
+                if self.pending_delete.is_some() {
+                    match direction {
+                        SelectionDirection::Left => {
+                            self.update(Message::SelectDeleteDialogAction(false))
+                        }
+                        SelectionDirection::Right => {
+                            self.update(Message::SelectDeleteDialogAction(true))
+                        }
+                        SelectionDirection::Up | SelectionDirection::Down => Task::none(),
+                    }
+                } else {
+                    self.move_selected_entry(direction);
                     Task::none()
                 }
             }
@@ -1847,6 +1889,56 @@ impl Gui {
         if range_selection {
             self.selection_anchor = Some(path.to_path_buf());
         }
+    }
+
+    fn move_selected_entry(&mut self, direction: SelectionDirection) {
+        if self.view != View::Browser
+            || self.editing_address
+            || self.pending_create.is_some()
+            || self.pending_rename.is_some()
+            || self.pending_compression
+            || self.selected_entries.len() != 1
+        {
+            return;
+        }
+        let browser = self.active_browser_settings();
+        let entries = self
+            .entries
+            .iter()
+            .filter(|entry| browser.show_hidden_files || !entry.name.starts_with('.'))
+            .collect::<Vec<_>>();
+        let Some(index) = entries
+            .iter()
+            .position(|entry| self.selected_entries.contains(Path::new(&entry.path)))
+        else {
+            return;
+        };
+        let target = match (browser.layout, direction) {
+            (_, SelectionDirection::Left | SelectionDirection::Up)
+                if browser.layout == BrowserLayout::List =>
+            {
+                index.checked_sub(1)
+            }
+            (_, SelectionDirection::Right | SelectionDirection::Down)
+                if browser.layout == BrowserLayout::List =>
+            {
+                (index + 1 < entries.len()).then_some(index + 1)
+            }
+            (_, SelectionDirection::Left) => index.checked_sub(1),
+            (_, SelectionDirection::Right) => (index + 1 < entries.len()).then_some(index + 1),
+            (_, SelectionDirection::Up) => index.checked_sub(self.tile_columns.get().max(1)),
+            (_, SelectionDirection::Down) => (index + self.tile_columns.get().max(1)
+                < entries.len())
+            .then_some(index + self.tile_columns.get().max(1)),
+        };
+        let Some(target) = target else {
+            return;
+        };
+        let path = PathBuf::from(&entries[target].path);
+        self.selected_entries.clear();
+        self.selected_entries.insert(path.clone());
+        self.selection_anchor = Some(path);
+        self.last_entry_click = None;
     }
 
     fn confirm_picker(&mut self) -> Task<Message> {
