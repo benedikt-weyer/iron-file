@@ -993,7 +993,9 @@ impl Gui {
                 Task::none()
             }
             Message::EscapePressed => {
-                if self.pending_info.is_some() {
+                if self.context_entry.is_some() {
+                    self.context_entry = None;
+                } else if self.pending_info.is_some() {
                     self.pending_info = None;
                 } else if self.editing_address {
                     self.address = self.directory_path.display().to_string();
@@ -1586,6 +1588,9 @@ impl Gui {
                 Task::none()
             }
             Message::ShowEntryContext { path, is_directory } => {
+                self.selected_entries.clear();
+                self.selected_entries.insert(path.clone());
+                self.selection_anchor = Some(path.clone());
                 self.context_entry = Some(ContextEntry {
                     path: path.clone(),
                     is_directory,
