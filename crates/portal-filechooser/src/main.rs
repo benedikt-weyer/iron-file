@@ -36,7 +36,7 @@ impl FileChooser {
     ) -> fdo::Result<(u32, HashMap<String, OwnedValue>)> {
         let directory = option_bool(&options, "directory");
         let multiple = option_bool(&options, "multiple");
-        let paths = self.select_locations(directory, multiple).await?;
+        let paths = self.select_locations(directory, multiple, None).await?;
         if paths.is_empty() {
             return Ok((1, HashMap::new()));
         }
@@ -52,11 +52,16 @@ impl FileChooser {
         _title: String,
         options: HashMap<String, OwnedValue>,
     ) -> fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        let Some(folder) = self.select_locations(true, false).await?.into_iter().next() else {
+        let name = save_file_name(&options)?;
+        let Some(path) = self
+            .select_locations(true, false, Some(&name))
+            .await?
+            .into_iter()
+            .next()
+        else {
             return Ok((1, HashMap::new()));
         };
-        let name = save_file_name(&options)?;
-        response(vec![folder.join(name)])
+        response(vec![path])
     }
 
     async fn save_files(
@@ -67,7 +72,12 @@ impl FileChooser {
         _title: String,
         options: HashMap<String, OwnedValue>,
     ) -> fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        let Some(folder) = self.select_locations(true, false).await?.into_iter().next() else {
+        let Some(folder) = self
+            .select_locations(true, false, None)
+            .await?
+            .into_iter()
+            .next()
+        else {
             return Ok((1, HashMap::new()));
         };
         let names = save_file_names(&options)?;
@@ -76,11 +86,19 @@ impl FileChooser {
 }
 
 impl FileChooser {
-    async fn select_locations(&self, directory: bool, multiple: bool) -> fdo::Result<Vec<PathBuf>> {
+    async fn select_locations(
+        &self,
+        directory: bool,
+        multiple: bool,
+        save_name: Option<&str>,
+    ) -> fdo::Result<Vec<PathBuf>> {
         let mut command = Command::new(&self.executable);
         command.args(["--mode", "picker"]);
         command.arg(if directory { "--folder" } else { "--file" });
         command.arg(if multiple { "--multiple" } else { "--single" });
+        if let Some(save_name) = save_name {
+            command.args(["--save-name", save_name]);
+        }
         command.stdout(Stdio::piped()).stderr(Stdio::null());
 
         let output = command

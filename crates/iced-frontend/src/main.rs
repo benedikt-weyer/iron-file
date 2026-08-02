@@ -4,7 +4,7 @@ use std::{
     env,
     ffi::OsString,
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     rc::Rc,
     time::{Duration, Instant},
@@ -76,10 +76,11 @@ enum PickerKind {
     Folder,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct PickerOptions {
     kind: PickerKind,
     multiple: bool,
+    save_file_name: Option<String>,
 }
 
 fn startup_options() -> StartupOptions {
@@ -95,6 +96,7 @@ fn parse_startup_options(arguments: impl IntoIterator<Item = OsString>) -> Start
     let mut picker_kind = PickerKind::File;
     let mut picker_multiple = false;
     let mut picker_requested = false;
+    let mut save_file_name = None;
 
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
@@ -112,6 +114,8 @@ fn parse_startup_options(arguments: impl IntoIterator<Item = OsString>) -> Start
             picker_multiple = true;
         } else if argument == "--single" {
             picker_multiple = false;
+        } else if argument == "--save-name" {
+            save_file_name = arguments.next().and_then(|name| name.into_string().ok());
         } else if !argument.to_string_lossy().starts_with('-') && options.initial_path.is_none() {
             options.initial_path = Some(PathBuf::from(argument));
         }
@@ -120,6 +124,7 @@ fn parse_startup_options(arguments: impl IntoIterator<Item = OsString>) -> Start
     options.picker = picker_requested.then_some(PickerOptions {
         kind: picker_kind,
         multiple: picker_multiple,
+        save_file_name,
     });
 
     options
@@ -137,6 +142,13 @@ fn resolve_path_from(path: PathBuf, current_directory: PathBuf) -> PathBuf {
         current_directory.join(path)
     };
     fs::canonicalize(&path).unwrap_or(path)
+}
+
+fn valid_save_file_name(name: &str) -> bool {
+    !name.is_empty()
+        && Path::new(name)
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
 }
 
 fn is_detached() -> bool {
@@ -186,8 +198,28 @@ mod startup_tests {
             Some(PickerOptions {
                 kind: PickerKind::Folder,
                 multiple: true,
+                save_file_name: None,
             })
         );
+    }
+
+    #[test]
+    fn parses_a_save_name_for_picker_mode() {
+        let options = parse_startup_options(
+            ["--mode", "picker", "--folder", "--save-name", "report.txt"].map(OsString::from),
+        );
+
+        assert_eq!(
+            options.picker.and_then(|picker| picker.save_file_name),
+            Some("report.txt".into())
+        );
+    }
+
+    #[test]
+    fn save_name_cannot_escape_the_selected_folder() {
+        assert!(valid_save_file_name("report.txt"));
+        assert!(!valid_save_file_name("../report.txt"));
+        assert!(!valid_save_file_name("/tmp/report.txt"));
     }
 
     #[test]
@@ -223,6 +255,8 @@ fn prefer_x11_when_available() {}
 struct Gui {
     follow_logs: bool,
     picker: Option<PickerOptions>,
+    save_file_name: Option<String>,
+    original_save_file_name: Option<String>,
     directory_path: PathBuf,
     address: String,
     entries: Vec<proto::FileEntry>,
@@ -494,6 +528,8 @@ enum Message {
     BackendLogPipeEnded(Result<(), String>),
     ConfirmPicker,
     CancelPicker,
+    SaveFileNameChanged(String),
+    ResetSaveFileName,
     CloseWindow(Option<window::Id>),
     RestartBackend,
     BackendRestarted(Result<(), String>),
@@ -562,6 +598,10 @@ impl Gui {
         initial_path: Option<PathBuf>,
         picker: Option<PickerOptions>,
     ) -> Self {
+        let save_file_name = picker
+            .as_ref()
+            .and_then(|picker| picker.save_file_name.clone());
+        let original_save_file_name = save_file_name.clone();
         let directory_path = initial_path
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         let config_store = ConfigStore::from_environment();
@@ -590,6 +630,8 @@ impl Gui {
         Self {
             follow_logs,
             picker,
+            save_file_name,
+            original_save_file_name,
             address: directory_path.display().to_string(),
             directory_path,
             entries: Vec::new(),
@@ -720,6 +762,14 @@ impl Gui {
             }
             Message::ConfirmPicker => self.confirm_picker(),
             Message::CancelPicker => self.close_window(),
+            Message::SaveFileNameChanged(name) => {
+                self.save_file_name = Some(name);
+                Task::none()
+            }
+            Message::ResetSaveFileName => {
+                self.save_file_name = self.original_save_file_name.clone();
+                Task::none()
+            }
             Message::CloseWindow(Some(id)) => window::close(id),
             Message::CloseWindow(None) => Task::none(),
             Message::ExecuteBrowserCommand(command) => self.execute_browser_command(command),
@@ -1400,7 +1450,20 @@ impl Gui {
     }
 
     fn handle_entry_click(&mut self, path: PathBuf, is_directory: bool) -> Task<Message> {
-        if let Some(picker) = self.picker {
+        if let Some(picker) = self.picker.as_ref() {
+            let now = Instant::now();
+            let is_double_click =
+                self.last_entry_click
+                    .as_ref()
+                    .is_some_and(|(last_path, last_click)| {
+                        last_path == &path
+                            && now.duration_since(*last_click) <= Duration::from_millis(500)
+                    });
+            self.last_entry_click = Some((path.clone(), now));
+            if is_directory && is_double_click {
+                self.last_entry_click = None;
+                return self.open_path(path);
+            }
             if (picker.kind == PickerKind::Folder) == is_directory {
                 self.select_entry(&path);
             }
@@ -1433,7 +1496,7 @@ impl Gui {
     }
 
     fn select_entry(&mut self, path: &Path) {
-        if self.picker.is_some_and(|picker| !picker.multiple) {
+        if self.picker.as_ref().is_some_and(|picker| !picker.multiple) {
             self.selected_entries.clear();
             self.selected_entries.insert(path.to_path_buf());
             self.selection_anchor = Some(path.to_path_buf());
@@ -1486,9 +1549,17 @@ impl Gui {
     }
 
     fn confirm_picker(&mut self) -> Task<Message> {
-        let Some(picker) = self.picker else {
+        let Some(picker) = self.picker.as_ref() else {
             return Task::none();
         };
+        if self
+            .save_file_name
+            .as_deref()
+            .is_some_and(|name| !valid_save_file_name(name))
+        {
+            self.status = "Enter a simple file name".into();
+            return Task::none();
+        }
         let mut selected = self
             .selected_entries
             .iter()
@@ -1512,6 +1583,11 @@ impl Gui {
             selected.truncate(1);
         }
         for path in selected {
+            let path = self
+                .save_file_name
+                .as_deref()
+                .map(|name| path.join(name))
+                .unwrap_or(path);
             println!("{}", path.display());
         }
         self.close_window()
@@ -2276,7 +2352,31 @@ impl Gui {
             iced::widget::container::Style::default()
                 .background(Color::from_rgba8(128, 128, 128, 0.12))
         });
-        let picker_actions = self.picker.map(|picker| {
+        let save_name_input = self.save_file_name.as_ref().map(|name| {
+            let reset = self
+                .original_save_file_name
+                .as_ref()
+                .is_some_and(|original| original != name)
+                .then(|| {
+                    tooltip(
+                        button(icon_text("rotate-ccw")).on_press(Message::ResetSaveFileName),
+                        text("Reset file name"),
+                        tooltip::Position::Top,
+                    )
+                });
+            container(
+                row![
+                    text_input("File name", name)
+                        .on_input(Message::SaveFileNameChanged)
+                        .width(Length::Fill),
+                ]
+                .push_maybe(reset)
+                .spacing(8),
+            )
+            .padding([6, 0])
+            .width(Length::Fill)
+        });
+        let picker_actions = self.picker.as_ref().map(|picker| {
             let selection_label = match (picker.kind, picker.multiple) {
                 (PickerKind::File, false) => "Select file",
                 (PickerKind::File, true) => "Select files",
@@ -2406,6 +2506,7 @@ impl Gui {
             .spacing(0)
             .height(Length::Fill);
         let file_content = column![quick_actions, browser]
+            .push_maybe(save_name_input)
             .push_maybe(picker_actions)
             .spacing(8)
             .width(Length::Fill)

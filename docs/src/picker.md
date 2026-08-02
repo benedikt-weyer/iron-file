@@ -22,6 +22,7 @@ cancelled picker exits without selected paths.
 | `--folder` | Accept folders instead of files. |
 | `--single` | Accept one location. This is the picker default. |
 | `--multiple`, `--multi` | Accept multiple locations. |
+| `--save-name NAME` | Show an editable save-file name field. Used by the portal `SaveFile` flow. |
 
 ```sh
 # Open the current directory or a relative location.
@@ -37,7 +38,11 @@ iron-file-iced --mode picker --folder --single
 
 The type and cardinality flags apply only when picker mode is active.
 For a folder picker, confirming without an explicit selection chooses the
-currently open folder.
+currently open folder. Double-click a folder to navigate into it; a single
+click selects it.
+
+When `--save-name` is present, the picker shows the suggested name in a bottom
+input bar. Editing it reveals a reset button that restores the original name.
 
 ## Development Scripts
 
@@ -57,7 +62,7 @@ They require simple file names, and reject directory separators and traversal
 names.
 
 ```sh
-# Print one selected destination, such as /home/user/Documents/report.txt.
+# Select one destination, edit its name if needed, and print the final path.
 save-file report.txt ~/Documents
 
 # Use -- to separate multiple names from an optional initial folder.

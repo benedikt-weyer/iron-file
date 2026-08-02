@@ -12,6 +12,5 @@ case "$name" in
     ;;
 esac
 
-folder=$(cargo run --package iron-file-iced -- --mode picker --folder --single "$@")
-[ -n "$folder" ] || exit 1
-printf '%s/%s\n' "$folder" "$name"
+exec cargo run --package iron-file-iced -- \
+  --mode picker --folder --single --save-name "$name" "$@"
