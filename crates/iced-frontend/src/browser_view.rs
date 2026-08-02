@@ -1270,8 +1270,6 @@ impl Gui {
 
     fn sidebar_view(&self) -> Element<'_, Message> {
         let browser_settings = self.active_browser_settings();
-        let max_name_lines = usize::from(self.active_browser_settings().max_name_lines.clamp(1, 5));
-        let name_height = 20.0 * max_name_lines as f32;
         let locations = self.active_sidebar_locations().into_iter().fold(
             column![].spacing(6),
             |column, location| {
@@ -1285,10 +1283,10 @@ impl Gui {
                     row![
                         icon_text(sidebar_icon(&location)),
                         tooltip(
-                            text(truncate_label(&label, 24 * max_name_lines))
+                            text(truncate_label(&label, 24))
                                 .width(Length::Fill)
-                                .height(Length::Fixed(name_height))
-                                .wrapping(Wrapping::WordOrGlyph),
+                                .height(Length::Fixed(20.0))
+                                .wrapping(Wrapping::None),
                             text(label),
                             tooltip::Position::Bottom,
                         )
