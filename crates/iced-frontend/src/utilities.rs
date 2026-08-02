@@ -1,4 +1,5 @@
 use super::*;
+use gio::prelude::*;
 
 pub(super) fn icon_text<'a>(name: &str) -> iced::widget::Text<'a> {
     let icon = try_icon(Pack::Lucide, name, Style::Regular, Size::Regular)
@@ -92,51 +93,29 @@ pub(super) fn themed_icon_path(theme: &str, icons: &[String]) -> Option<PathBuf>
 }
 
 pub(super) fn gio_icon_names_batch(paths: &[PathBuf]) -> HashMap<PathBuf, Vec<String>> {
-    let Ok(output) = Command::new("gio")
-        .args(["info", "-a", "standard::icon"])
-        .args(paths)
-        .output()
-    else {
-        return HashMap::new();
-    };
-    let mut result = HashMap::new();
-    let mut path = None;
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        if let Some(value) = line.strip_prefix("local path: ") {
-            path = Some(PathBuf::from(value));
-        }
-        if let Some(value) = line.trim().strip_prefix("standard::icon: ")
-            && let Some(path) = path.take()
-        {
-            result.insert(
-                path,
-                value.split(',').map(str::trim).map(str::to_owned).collect(),
-            );
-        }
-    }
-    result
+    paths
+        .iter()
+        .filter_map(|path| {
+            let names = gio_icon_names(path);
+            (!names.is_empty()).then(|| (path.clone(), names))
+        })
+        .collect()
 }
 
 pub(super) fn gio_icon_names(path: &Path) -> Vec<String> {
-    let Ok(output) = Command::new("gio")
-        .args(["info", "-a", "standard::icon"])
-        .arg(path)
-        .output()
-    else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("standard::icon:"))
-        .map(|icons| {
-            icons
-                .split(',')
-                .map(str::trim)
-                .filter(|icon| !icon.is_empty())
-                .map(str::to_owned)
+    gio::File::for_path(path)
+        .query_info(
+            "standard::icon",
+            gio::FileQueryInfoFlags::NONE,
+            gio::Cancellable::NONE,
+        )
+        .ok()
+        .and_then(|info| info.icon())
+        .and_then(|icon| icon.downcast::<gio::ThemedIcon>().ok())
+        .map(|icon| {
+            icon.names()
+                .into_iter()
+                .map(|name| name.to_string())
                 .collect()
         })
         .unwrap_or_default()

@@ -3330,6 +3330,7 @@ name = "iron-file-iced"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "gio",
  "iced",
  "iced_wgpu",
  "iconflow",
