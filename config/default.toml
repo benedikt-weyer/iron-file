@@ -61,6 +61,7 @@ sort_order = "name-ascending"
 folder_sort_overrides = []
 keyboard_shortcuts = [
   { action = "rename-selection", key = "F2" },
+  { action = "search-current-folder", key = "Ctrl+F" },
 ]
 
 [[sidebar_locations]]

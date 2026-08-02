@@ -371,16 +371,18 @@ impl fmt::Display for EntrySortOrder {
 #[serde(rename_all = "kebab-case")]
 pub enum KeyboardShortcutAction {
     RenameSelection,
+    SearchCurrentFolder,
 }
 
 impl KeyboardShortcutAction {
-    pub const ALL: [Self; 1] = [Self::RenameSelection];
+    pub const ALL: [Self; 2] = [Self::RenameSelection, Self::SearchCurrentFolder];
 }
 
 impl fmt::Display for KeyboardShortcutAction {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::RenameSelection => "Rename selected entry",
+            Self::SearchCurrentFolder => "Search current folder",
         })
     }
 }
@@ -891,10 +893,16 @@ fn default_entry_sort_order() -> EntrySortOrder {
 }
 
 fn default_keyboard_shortcuts() -> Vec<KeyboardShortcut> {
-    vec![KeyboardShortcut {
-        action: KeyboardShortcutAction::RenameSelection,
-        key: "F2".into(),
-    }]
+    vec![
+        KeyboardShortcut {
+            action: KeyboardShortcutAction::RenameSelection,
+            key: "F2".into(),
+        },
+        KeyboardShortcut {
+            action: KeyboardShortcutAction::SearchCurrentFolder,
+            key: "Ctrl+F".into(),
+        },
+    ]
 }
 
 impl BrowserSettings {

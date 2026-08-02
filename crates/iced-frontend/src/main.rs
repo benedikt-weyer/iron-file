@@ -39,7 +39,7 @@ use iron_file_common::{
     },
     copy_entries, create_entry, create_symlinks, create_thumbnail, delete_entries, ensure_backend,
     extract_archives, inspect_entry, pipe_backend_logs, proto, rename_entry, restart_backend,
-    stream_directory,
+    search_directory, stream_directory,
 };
 use proto::{BrowseResponse, browse_response::Payload};
 use serde::Deserialize;
@@ -410,6 +410,7 @@ struct Gui {
     modifiers: keyboard::Modifiers,
     browser_pointer: Point,
     rectangle_selection: Option<RectangleSelection>,
+    search: Option<SearchState>,
     tile_columns: Rc<Cell<usize>>,
 }
 
@@ -494,6 +495,42 @@ struct RectangleSelection {
     start: Point,
     end: Point,
     initial_selection: HashSet<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct SearchState {
+    root: PathBuf,
+    query: String,
+    depth: SearchDepth,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchDepth {
+    CurrentFolder,
+    OneLevel,
+    Maximum,
+}
+
+impl SearchDepth {
+    const ALL: [Self; 3] = [Self::CurrentFolder, Self::OneLevel, Self::Maximum];
+
+    fn max_depth(self) -> u32 {
+        match self {
+            Self::CurrentFolder => 0,
+            Self::OneLevel => 1,
+            Self::Maximum => u32::MAX,
+        }
+    }
+}
+
+impl std::fmt::Display for SearchDepth {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::CurrentFolder => "Depth: 0",
+            Self::OneLevel => "Depth: 1",
+            Self::Maximum => "Depth: Max",
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -707,6 +744,17 @@ enum Message {
     RectanglePointerMoved(Point),
     FinishRectangleSelection,
     OpenParent,
+    ShowSearch,
+    CloseSearch,
+    SearchQueryChanged(String),
+    SearchDepthSelected(SearchDepth),
+    RunSearch,
+    SearchFinished {
+        root: PathBuf,
+        query: String,
+        depth: SearchDepth,
+        result: Result<Vec<proto::FileEntry>, String>,
+    },
     ShowBrowser,
     ShowPreferences,
     SelectProfile(PathBuf),
@@ -848,6 +896,9 @@ impl Gui {
                     )),
                     keyboard::Key::Character("v" | "V") => {
                         Some(Message::ExecuteBrowserCommand(BrowserCommand::Paste))
+                    }
+                    keyboard::Key::Character("f" | "F") => {
+                        Some(Message::ShortcutPressed("Ctrl+F".into()))
                     }
                     _ => None,
                 }
@@ -992,6 +1043,7 @@ impl Gui {
             modifiers: keyboard::Modifiers::default(),
             browser_pointer: Point::ORIGIN,
             rectangle_selection: None,
+            search: None,
             tile_columns: Rc::new(Cell::new(1)),
         }
     }
@@ -1302,6 +1354,61 @@ impl Gui {
                     .map(|path| self.open_path(path))
                     .unwrap_or_else(Task::none)
             }
+            Message::ShowSearch => {
+                self.search = Some(SearchState {
+                    root: self.directory_path.clone(),
+                    query: String::new(),
+                    depth: SearchDepth::CurrentFolder,
+                });
+                self.status = format!("Search in {}", self.directory_path.display());
+                Task::none()
+            }
+            Message::CloseSearch => {
+                self.search = None;
+                self.refresh_directory()
+            }
+            Message::SearchQueryChanged(query) => {
+                if let Some(search) = &mut self.search {
+                    search.query = query;
+                }
+                self.run_search()
+            }
+            Message::SearchDepthSelected(depth) => {
+                if let Some(search) = &mut self.search {
+                    search.depth = depth;
+                }
+                self.run_search()
+            }
+            Message::RunSearch => self.run_search(),
+            Message::SearchFinished {
+                root,
+                query,
+                depth,
+                result,
+            } => {
+                if self.search.as_ref().is_none_or(|search| {
+                    search.root != root || search.query != query || search.depth != depth
+                }) {
+                    return Task::none();
+                }
+                match result {
+                    Ok(mut entries) => {
+                        let sort_order = self
+                            .folder_sort_override(&self.directory_path)
+                            .unwrap_or(self.active_browser_settings().sort_order);
+                        sort_entries(&mut entries, sort_order);
+                        self.entries = entries;
+                        self.selected_entries.clear();
+                        self.selection_anchor = None;
+                        self.status = format!("{} search result(s)", self.entries.len());
+                        Task::none()
+                    }
+                    Err(error) => {
+                        self.status = format!("Search failed: {error}");
+                        Task::none()
+                    }
+                }
+            }
             Message::ShowBrowser => {
                 self.view = View::Browser;
                 Task::none()
@@ -1461,6 +1568,9 @@ impl Gui {
                 match action {
                     Some(KeyboardShortcutAction::RenameSelection) => {
                         self.execute_browser_command(BrowserCommand::RenameSelection)
+                    }
+                    Some(KeyboardShortcutAction::SearchCurrentFolder) => {
+                        self.update(Message::ShowSearch)
                     }
                     None => Task::none(),
                 }
@@ -3189,6 +3299,7 @@ impl Gui {
     }
 
     fn open_path(&mut self, path: PathBuf) -> Task<Message> {
+        self.search = None;
         self.request_path(path, HistoryRequest::New)
     }
 
@@ -3218,6 +3329,25 @@ impl Gui {
 
     fn refresh_directory(&mut self) -> Task<Message> {
         self.request_path(self.directory_path.clone(), HistoryRequest::Refresh)
+    }
+
+    fn run_search(&mut self) -> Task<Message> {
+        let Some(search) = &self.search else {
+            return Task::none();
+        };
+        self.status = format!("Searching {}", search.root.display());
+        let root = search.root.clone();
+        let query = search.query.clone();
+        let depth = search.depth;
+        Task::perform(
+            search_directory(root.clone(), query.clone(), depth.max_depth()),
+            move |result| Message::SearchFinished {
+                root,
+                query,
+                depth,
+                result,
+            },
+        )
     }
 
     fn apply_response(

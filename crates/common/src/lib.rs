@@ -24,8 +24,8 @@ pub mod proto {
 
 use proto::{
     CreateEntryRequest, DeleteEntriesRequest, EntryInfoRequest, FileCommandRequest,
-    ListDirectoryRequest, LogStreamRequest, OpenPathRequest, RenameEntryRequest, ThumbnailRequest,
-    file_browser_client::FileBrowserClient,
+    ListDirectoryRequest, LogStreamRequest, OpenPathRequest, RenameEntryRequest,
+    SearchDirectoryRequest, ThumbnailRequest, file_browser_client::FileBrowserClient,
 };
 
 const BACKEND_MODE_ENV: &str = "IRON_FILE_BACKEND_MODE";
@@ -356,6 +356,23 @@ pub fn stream_directory(
             yield Ok(batch);
         }
     }
+}
+
+pub async fn search_directory(
+    path: PathBuf,
+    query: String,
+    max_depth: u32,
+) -> Result<Vec<proto::FileEntry>, String> {
+    let mut client = connect_or_start().await?;
+    client
+        .search_directory(Request::new(SearchDirectoryRequest {
+            path: path.display().to_string(),
+            query,
+            max_depth,
+        }))
+        .await
+        .map(|response| response.into_inner().entries)
+        .map_err(|error| error.to_string())
 }
 
 pub async fn ensure_backend() -> Result<(), String> {

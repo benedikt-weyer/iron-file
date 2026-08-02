@@ -29,7 +29,8 @@ use proto::{
     BrowseResponse, BrowserError, CreateEntryRequest, DeleteEntriesRequest, Directory,
     EntryInfoField, EntryInfoRequest, EntryInfoResponse, FileCommandRequest, FileCommandResponse,
     FileContent, FileEntry, ListDirectoryRequest, LogEntry, LogStreamRequest, OpenPathRequest,
-    RenameEntryRequest, ThumbnailRequest, ThumbnailResponse,
+    RenameEntryRequest, SearchDirectoryRequest, SearchDirectoryResponse, ThumbnailRequest,
+    ThumbnailResponse,
     browse_response::Payload,
     file_browser_server::{FileBrowser, FileBrowserServer},
 };
@@ -87,6 +88,18 @@ impl FileBrowser for FileBrowserService {
                     ..FileEntry::default()
                 }))),
         ))))
+    }
+
+    async fn search_directory(
+        &self,
+        request: Request<SearchDirectoryRequest>,
+    ) -> Result<Response<SearchDirectoryResponse>, Status> {
+        let request = request.into_inner();
+        let path = PathBuf::from(request.path);
+        self.log(format!("Searching {}", path.display()));
+        search_directory(&path, &request.query, request.max_depth)
+            .map(|entries| Response::new(SearchDirectoryResponse { entries }))
+            .map_err(Status::internal)
     }
 
     async fn create_thumbnail(
@@ -557,6 +570,71 @@ fn directory_entries(path: &Path) -> Result<Vec<FileEntry>, String> {
     sort_file_entries(&mut files);
 
     Ok(files)
+}
+
+fn search_directory(path: &Path, query: &str, max_depth: u32) -> Result<Vec<FileEntry>, String> {
+    let query = query.to_lowercase();
+    let mut entries = Vec::new();
+    collect_search_entries(path, &query, max_depth, &mut entries)?;
+    sort_file_entries(&mut entries);
+    Ok(entries)
+}
+
+fn collect_search_entries(
+    path: &Path,
+    query: &str,
+    remaining_depth: u32,
+    results: &mut Vec<FileEntry>,
+) -> Result<(), String> {
+    for entry in std::fs::read_dir(path)
+        .map_err(|error| error.to_string())?
+        .flatten()
+    {
+        let entry_path = entry.path();
+        let file_name = entry.file_name().to_string_lossy().into_owned();
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        if file_name.to_lowercase().contains(query) {
+            results.push(file_entry(
+                entry_path.clone(),
+                file_name,
+                file_type.is_dir(),
+            ));
+        }
+        if file_type.is_dir() && remaining_depth > 0 {
+            collect_search_entries(
+                &entry_path,
+                query,
+                remaining_depth.saturating_sub(1),
+                results,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn file_entry(path: PathBuf, name: String, is_directory: bool) -> FileEntry {
+    let is_symlink = std::fs::symlink_metadata(&path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false);
+    let metadata = std::fs::metadata(&path).ok();
+    FileEntry {
+        name,
+        is_directory,
+        path: path.display().to_string(),
+        thumbnail_path: String::new(),
+        is_symlink,
+        modified_at: metadata
+            .as_ref()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(timestamp_seconds)
+            .unwrap_or_default(),
+        created_at: metadata
+            .as_ref()
+            .and_then(|metadata| metadata.created().ok())
+            .and_then(timestamp_seconds)
+            .unwrap_or_default(),
+        ..FileEntry::default()
+    }
 }
 
 fn timestamp_seconds(time: std::time::SystemTime) -> Option<i64> {

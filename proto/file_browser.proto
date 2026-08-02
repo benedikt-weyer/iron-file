@@ -5,6 +5,7 @@ package ironfile.v1;
 service FileBrowser {
   rpc OpenPath(OpenPathRequest) returns (BrowseResponse);
   rpc ListDirectory(ListDirectoryRequest) returns (stream FileEntry);
+  rpc SearchDirectory(SearchDirectoryRequest) returns (SearchDirectoryResponse);
   rpc CreateThumbnail(ThumbnailRequest) returns (ThumbnailResponse);
   rpc InspectEntry(EntryInfoRequest) returns (EntryInfoResponse);
   rpc CopyEntries(FileCommandRequest) returns (FileCommandResponse);
@@ -97,6 +98,17 @@ message RenameEntryRequest {
 
 message ListDirectoryRequest {
   string path = 1;
+}
+
+message SearchDirectoryRequest {
+  string path = 1;
+  string query = 2;
+  // 0 searches only this folder, 1 includes direct child folders, and UINT32_MAX is unlimited.
+  uint32 max_depth = 3;
+}
+
+message SearchDirectoryResponse {
+  repeated FileEntry entries = 1;
 }
 
 message Directory {

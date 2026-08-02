@@ -218,6 +218,11 @@ impl Gui {
                 tooltip::Position::Bottom,
             ));
         }
+        address_bar = address_bar.push(tooltip(
+            button(icon_text("search")).on_press(Message::ShowSearch),
+            text("Search current folder"),
+            tooltip::Position::Bottom,
+        ));
         let has_selection = !self.selected_entries.is_empty();
         let mut quick_toolbar_actions = row![].spacing(8);
         let mut rendered_quick_toolbar_items = HashSet::new();
@@ -364,6 +369,38 @@ impl Gui {
             text(String::from("Preferences")),
             tooltip::Position::Bottom,
         ));
+        let search_controls = self.search.as_ref().map(|search| {
+            container(
+                row![
+                    text_input("Search names", &search.query)
+                        .on_input(Message::SearchQueryChanged)
+                        .on_submit(Message::RunSearch)
+                        .width(Length::Fill),
+                    tooltip(
+                        button(icon_text("search")).on_press(Message::RunSearch),
+                        text("Search"),
+                        tooltip::Position::Bottom,
+                    ),
+                    pick_list(
+                        SearchDepth::ALL,
+                        Some(search.depth),
+                        Message::SearchDepthSelected,
+                    )
+                    .width(Length::Fixed(120.0))
+                    .style(rounded_pick_list_style)
+                    .menu_style(rounded_pick_list_menu_style),
+                    tooltip(
+                        button(icon_text("x")).on_press(Message::CloseSearch),
+                        text("Close search"),
+                        tooltip::Position::Bottom,
+                    ),
+                ]
+                .spacing(8)
+                .align_y(iced::alignment::Vertical::Center),
+            )
+            .padding([4, 0])
+            .width(Length::Fill)
+        });
         let tiles_layout = browser_settings.layout == BrowserLayout::Tiles;
         let info_status = self.status.clone();
         let browser: Element<'_, Message> = if browser_settings.preview_enabled {
@@ -508,7 +545,9 @@ impl Gui {
             .spacing(16)
             .width(Length::Fill)
             .height(Length::Fill);
-        let content = column![address_bar, main_content];
+        let content = column![address_bar,]
+            .push_maybe(search_controls)
+            .push(main_content);
 
         let page = container(content.spacing(12).padding(16).height(Length::Fill))
             .width(Length::Fill)
