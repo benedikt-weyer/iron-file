@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 fs2 = "0.4"
+hayro = { version = "0.7.1", features = ["embed-fonts"] }
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "tiff", "webp"] }
 lofty = "0.22"
 iron-file-common = { path = "../common" }

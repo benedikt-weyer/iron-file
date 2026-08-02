@@ -7,6 +7,9 @@ use std::{
 };
 
 use fs2::FileExt;
+use hayro::vello_cpu::color::palette::css::WHITE;
+use hayro::{RenderCache, RenderSettings, render};
+use hayro::{hayro_interpret::InterpreterSettings, hayro_syntax::Pdf};
 use image::{DynamicImage, ImageFormat, ImageReader};
 use iron_file_common::{backend_lock_path, proto, socket_path};
 use sha1::{Digest, Sha1};
@@ -869,12 +872,51 @@ fn thumbnail_for(path: &Path, directory: &Path) -> Result<ThumbnailOutcome, Stri
         return Ok(ThumbnailOutcome::Cached(thumbnail_path));
     }
 
-    let image = image_from_path(path).or_else(|| audio_cover_image(path));
-    let Some(image) = image else {
-        return Ok(ThumbnailOutcome::NotImage);
+    let image = match image_from_path(path).or_else(|| audio_cover_image(path)) {
+        Some(image) => image,
+        None if is_pdf(path) => pdf_first_page_image(path)?,
+        None => return Ok(ThumbnailOutcome::NotImage),
     };
     write_thumbnail(image, &thumbnail_path)?;
     Ok(ThumbnailOutcome::Generated(thumbnail_path))
+}
+
+fn is_pdf(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
+}
+
+fn pdf_first_page_image(path: &Path) -> Result<DynamicImage, String> {
+    let data = std::fs::read(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let pdf = Pdf::new(data).map_err(|error| format!("could not parse PDF: {error:?}"))?;
+    let page = pdf
+        .pages()
+        .iter()
+        .next()
+        .ok_or_else(|| "PDF has no pages".to_owned())?;
+    let (width, height) = page.render_dimensions();
+    let scale = 512.0 / width.max(height).max(1.0);
+    let pixmap = render(
+        page,
+        &RenderCache::new(),
+        &InterpreterSettings::default(),
+        &RenderSettings {
+            x_scale: scale,
+            y_scale: scale,
+            bg_color: WHITE,
+            ..Default::default()
+        },
+    );
+    let png = pixmap
+        .into_png()
+        .map_err(|error| format!("could not encode PDF preview: {error}"))?;
+    ImageReader::new(Cursor::new(png))
+        .with_guessed_format()
+        .map_err(|error| format!("could not read PDF preview: {error}"))?
+        .decode()
+        .map_err(|error| format!("could not decode PDF preview: {error}"))
 }
 
 fn image_from_path(path: &Path) -> Option<DynamicImage> {
@@ -961,6 +1003,55 @@ mod tests {
             thumbnail_filename(Path::new("/tmp/image.png")),
             "0fef0cc8ed6b0e98686a7ae869b2eda3aafce32e.png"
         );
+    }
+
+    #[test]
+    fn identifies_pdf_paths_case_insensitively() {
+        assert!(is_pdf(Path::new("report.pdf")));
+        assert!(is_pdf(Path::new("report.PDF")));
+        assert!(!is_pdf(Path::new("report.png")));
+    }
+
+    #[test]
+    fn creates_a_thumbnail_for_a_pdf() {
+        let root = std::env::temp_dir().join(format!(
+            "iron-file-pdf-thumbnail-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let pdf_path = root.join("document.pdf");
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let mut offsets = vec![0];
+        for object in [
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+            "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> /Contents 4 0 R >>\nendobj\n",
+            "4 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n",
+        ] {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object.as_bytes());
+        }
+        let xref = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 5\n0000000000 65535 f \n");
+        for offset in offsets.into_iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+        );
+        std::fs::write(&pdf_path, pdf).unwrap();
+
+        let outcome = thumbnail_for(&pdf_path, &root.join("thumbnails")).unwrap();
+        let ThumbnailOutcome::Generated(thumbnail_path) = outcome else {
+            panic!("expected a generated PDF thumbnail");
+        };
+        assert!(thumbnail_path.is_file());
+        assert!(image::open(&thumbnail_path).is_ok());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
