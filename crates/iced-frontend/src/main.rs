@@ -453,6 +453,12 @@ struct FolderLoadPerformance {
     thumbnails_total: usize,
     thumbnails_settled: usize,
     thumbnails_settled_at: Option<Instant>,
+    item_rendered_at: Vec<Instant>,
+    thumbnail_settled_at: Vec<Instant>,
+    entry_path_us: u64,
+    entry_symlink_us: u64,
+    entry_metadata_us: u64,
+    entry_timestamps_us: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -1844,6 +1850,7 @@ impl Gui {
             } => {
                 if let Some(performance) = &mut self.folder_load_performance {
                     performance.thumbnails_settled += 1;
+                    performance.thumbnail_settled_at.push(Instant::now());
                     if performance.displayed_at.is_some()
                         && performance.thumbnails_settled == performance.thumbnails_total
                     {
@@ -1875,6 +1882,7 @@ impl Gui {
             } => {
                 if let Some(performance) = &mut self.folder_load_performance {
                     performance.thumbnails_settled += 1;
+                    performance.thumbnail_settled_at.push(Instant::now());
                 }
                 eprintln!("[iron-file thumbnails] {error}");
                 Task::none()
@@ -1902,6 +1910,13 @@ impl Gui {
                     && performance.first_item_at.is_none()
                 {
                     performance.first_item_at = Some(Instant::now());
+                }
+                if let Some(performance) = &mut self.folder_load_performance {
+                    performance.item_rendered_at.push(Instant::now());
+                    performance.entry_path_us += entry.entry_path_ms;
+                    performance.entry_symlink_us += entry.entry_symlink_ms;
+                    performance.entry_metadata_us += entry.entry_metadata_ms;
+                    performance.entry_timestamps_us += entry.entry_timestamps_ms;
                 }
                 let icon_theme = self.active_browser_settings().icon_theme;
                 self.entry_icons
@@ -3057,6 +3072,12 @@ impl Gui {
                     thumbnails_total: 0,
                     thumbnails_settled: 0,
                     thumbnails_settled_at: None,
+                    item_rendered_at: Vec::new(),
+                    thumbnail_settled_at: Vec::new(),
+                    entry_path_us: 0,
+                    entry_symlink_us: 0,
+                    entry_metadata_us: 0,
+                    entry_timestamps_us: 0,
                 });
                 let preserve_thumbnails = matches!(history, HistoryRequest::Refresh)
                     && self.directory_path == PathBuf::from(&response.path);

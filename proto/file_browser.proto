@@ -39,6 +39,10 @@ message FileEntry {
   bool directory_complete = 8;
   uint64 directory_enumeration_ms = 9;
   uint32 directory_entry_count = 10;
+  uint64 entry_path_ms = 11;
+  uint64 entry_symlink_ms = 12;
+  uint64 entry_metadata_ms = 13;
+  uint64 entry_timestamps_ms = 14;
 }
 
 message ThumbnailRequest {

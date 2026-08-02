@@ -516,11 +516,18 @@ fn directory_entries(path: &Path) -> Result<Vec<FileEntry>, String> {
     let mut files = entries
         .filter_map(Result::ok)
         .map(|entry| {
+            let started_at = std::time::Instant::now();
             let path = entry.path();
+            let path_ms = started_at.elapsed().as_micros() as u64;
+            let symlink_started_at = std::time::Instant::now();
             let is_symlink = std::fs::symlink_metadata(&path)
                 .map(|metadata| metadata.file_type().is_symlink())
                 .unwrap_or(false);
+            let symlink_ms = symlink_started_at.elapsed().as_micros() as u64;
+            let metadata_started_at = std::time::Instant::now();
             let metadata = std::fs::metadata(&path).ok();
+            let metadata_ms = metadata_started_at.elapsed().as_micros() as u64;
+            let timestamps_started_at = std::time::Instant::now();
             FileEntry {
                 name: entry.file_name().to_string_lossy().into_owned(),
                 is_directory: path.is_dir(),
@@ -540,6 +547,10 @@ fn directory_entries(path: &Path) -> Result<Vec<FileEntry>, String> {
                 directory_complete: false,
                 directory_enumeration_ms: 0,
                 directory_entry_count: 0,
+                entry_path_ms: path_ms,
+                entry_symlink_ms: symlink_ms,
+                entry_metadata_ms: metadata_ms,
+                entry_timestamps_ms: timestamps_started_at.elapsed().as_micros() as u64,
             }
         })
         .collect::<Vec<_>>();
