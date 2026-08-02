@@ -574,6 +574,13 @@ impl Gui {
                                 .on_press(Message::RequestRenameEntry(entry.path.clone()))
                                 .into(),
                         ),
+                        ContextMenuItem::Duplicate => Some(
+                            button(row![icon_text("copy").size(16), text("Duplicate")].spacing(8))
+                                .width(Length::Fill)
+                                .style(context_menu_button_style)
+                                .on_press(Message::DuplicateContextEntry(entry.path.clone()))
+                                .into(),
+                        ),
                         ContextMenuItem::Open if !entry.is_directory => Some(
                             button(
                                 row![

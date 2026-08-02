@@ -762,6 +762,7 @@ enum Message {
     ResetSaveFileName,
     RefreshDirectory,
     CloneWindow,
+    DuplicateContextEntry(PathBuf),
     CloseWindow(Option<window::Id>),
     RestartBackend,
     BackendRestarted(Result<(), String>),
@@ -1050,6 +1051,13 @@ impl Gui {
                     Err(error) => error,
                 };
                 Task::none()
+            }
+            Message::DuplicateContextEntry(path) => {
+                let Some(parent) = path.parent().map(Path::to_path_buf) else {
+                    self.status = format!("Could not duplicate {}", path.display());
+                    return Task::none();
+                };
+                Task::perform(copy_entries(vec![path], parent), Message::FileCopyFinished)
             }
             Message::CloseWindow(Some(id)) => window::close(id),
             Message::CloseWindow(None) => Task::none(),

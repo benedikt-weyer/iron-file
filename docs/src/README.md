@@ -26,7 +26,7 @@ vendors and enables that patch through its Cargo workspace override.
 The `[browser]` `file_context_menu_items` and `folder_context_menu_items`
 arrays independently control visible actions and their order. Omit an item to
 hide it. Folder defaults put `"create-folder"` and `"create-file"` first.
-Available values are `"create-folder"`, `"create-file"`, `"rename"`, `"open"`,
+Available values are `"create-folder"`, `"create-file"`, `"rename"`, `"duplicate"`, `"open"`,
 `"copy-location"`, `"copy-selection"`, `"delete-selection"`, `"paste"`,
 `"toggle-sidebar-location"`, `"create-symlink"`,
 `"add-symlink-to-paste-buffer"`, and `"open-terminal"`. Actions that do not
