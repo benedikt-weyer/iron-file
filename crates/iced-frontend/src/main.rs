@@ -35,7 +35,7 @@ const DETACHED_ENV: &str = "IRON_FILE_DETACHED";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let startup = startup_options();
-    if !startup.follow_logs && !is_detached() {
+    if !startup.follow_logs && startup.picker.is_none() && !is_detached() {
         detach()?;
         return Ok(());
     }
@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         })
         .run_with(move || {
-            let gui = Gui::new(startup.follow_logs, startup.initial_path);
+            let gui = Gui::new(startup.follow_logs, startup.initial_path, startup.picker);
             let task = gui.load_initial_directory();
             (gui, task)
         })?;
@@ -66,6 +66,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 struct StartupOptions {
     follow_logs: bool,
     initial_path: Option<PathBuf>,
+    picker: Option<PickerOptions>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PickerKind {
+    File,
+    Folder,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PickerOptions {
+    kind: PickerKind,
+    multiple: bool,
 }
 
 fn startup_options() -> StartupOptions {
@@ -76,15 +89,37 @@ fn parse_startup_options(arguments: impl IntoIterator<Item = OsString>) -> Start
     let mut options = StartupOptions {
         follow_logs: false,
         initial_path: None,
+        picker: None,
     };
+    let mut picker_kind = PickerKind::File;
+    let mut picker_multiple = false;
+    let mut picker_requested = false;
 
-    for argument in arguments {
+    let mut arguments = arguments.into_iter();
+    while let Some(argument) = arguments.next() {
         if argument == "-f" || argument == "--follow" {
             options.follow_logs = true;
+        } else if argument == "--mode" {
+            picker_requested = arguments.next().is_some_and(|mode| mode == "picker");
+        } else if argument == "--picker" {
+            picker_requested = true;
+        } else if argument == "--file" {
+            picker_kind = PickerKind::File;
+        } else if argument == "--folder" {
+            picker_kind = PickerKind::Folder;
+        } else if argument == "--multiple" || argument == "--multi" {
+            picker_multiple = true;
+        } else if argument == "--single" {
+            picker_multiple = false;
         } else if !argument.to_string_lossy().starts_with('-') && options.initial_path.is_none() {
             options.initial_path = Some(PathBuf::from(argument));
         }
     }
+
+    options.picker = picker_requested.then_some(PickerOptions {
+        kind: picker_kind,
+        multiple: picker_multiple,
+    });
 
     options
 }
@@ -124,6 +159,21 @@ mod startup_tests {
         assert!(options.follow_logs);
         assert_eq!(options.initial_path, Some(PathBuf::from("/tmp/first")));
     }
+
+    #[test]
+    fn parses_folder_multi_picker_mode() {
+        let options = parse_startup_options(
+            ["--mode", "picker", "--folder", "--multiple"].map(OsString::from),
+        );
+
+        assert_eq!(
+            options.picker,
+            Some(PickerOptions {
+                kind: PickerKind::Folder,
+                multiple: true,
+            })
+        );
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -141,6 +191,7 @@ fn prefer_x11_when_available() {}
 
 struct Gui {
     follow_logs: bool,
+    picker: Option<PickerOptions>,
     directory_path: PathBuf,
     address: String,
     entries: Vec<proto::FileEntry>,
@@ -410,6 +461,9 @@ enum Message {
     FileOpened(Result<(), String>),
     TerminalOpened(Result<(), String>),
     BackendLogPipeEnded(Result<(), String>),
+    ConfirmPicker,
+    CancelPicker,
+    CloseWindow(Option<window::Id>),
     RestartBackend,
     BackendRestarted(Result<(), String>),
     ThumbnailGenerated {
@@ -472,7 +526,11 @@ impl Gui {
         })
     }
 
-    fn new(follow_logs: bool, initial_path: Option<PathBuf>) -> Self {
+    fn new(
+        follow_logs: bool,
+        initial_path: Option<PathBuf>,
+        picker: Option<PickerOptions>,
+    ) -> Self {
         let directory_path = initial_path
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         let config_store = ConfigStore::from_environment();
@@ -500,6 +558,7 @@ impl Gui {
             .unwrap_or_else(iron_file_common::config::default_theme_settings);
         Self {
             follow_logs,
+            picker,
             address: directory_path.display().to_string(),
             directory_path,
             entries: Vec::new(),
@@ -628,6 +687,10 @@ impl Gui {
             Message::EntryClicked { path, is_directory } => {
                 self.handle_entry_click(path, is_directory)
             }
+            Message::ConfirmPicker => self.confirm_picker(),
+            Message::CancelPicker => self.close_window(),
+            Message::CloseWindow(Some(id)) => window::close(id),
+            Message::CloseWindow(None) => Task::none(),
             Message::ExecuteBrowserCommand(command) => self.execute_browser_command(command),
             Message::FileCopyFinished(result) => match result {
                 Ok(paths) => {
@@ -1306,6 +1369,12 @@ impl Gui {
     }
 
     fn handle_entry_click(&mut self, path: PathBuf, is_directory: bool) -> Task<Message> {
+        if let Some(picker) = self.picker {
+            if (picker.kind == PickerKind::Folder) == is_directory {
+                self.select_entry(&path);
+            }
+            return Task::none();
+        }
         self.select_entry(&path);
         let now = Instant::now();
         let is_double_click =
@@ -1333,6 +1402,12 @@ impl Gui {
     }
 
     fn select_entry(&mut self, path: &Path) {
+        if self.picker.is_some_and(|picker| !picker.multiple) {
+            self.selected_entries.clear();
+            self.selected_entries.insert(path.to_path_buf());
+            self.selection_anchor = Some(path.to_path_buf());
+            return;
+        }
         let add_to_selection = self.modifiers.command();
         let range_selection = self.modifiers.shift();
         if range_selection {
@@ -1377,6 +1452,41 @@ impl Gui {
         if range_selection {
             self.selection_anchor = Some(path.to_path_buf());
         }
+    }
+
+    fn confirm_picker(&mut self) -> Task<Message> {
+        let Some(picker) = self.picker else {
+            return Task::none();
+        };
+        let mut selected = self
+            .selected_entries
+            .iter()
+            .filter(|path| {
+                std::fs::metadata(path)
+                    .map(|metadata| (picker.kind == PickerKind::Folder) == metadata.is_dir())
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        selected.sort();
+        if selected.is_empty() {
+            self.status = match picker.kind {
+                PickerKind::File => "Select a file first".into(),
+                PickerKind::Folder => "Select a folder first".into(),
+            };
+            return Task::none();
+        }
+        if !picker.multiple {
+            selected.truncate(1);
+        }
+        for path in selected {
+            println!("{}", path.display());
+        }
+        self.close_window()
+    }
+
+    fn close_window(&self) -> Task<Message> {
+        window::get_oldest().map(Message::CloseWindow)
     }
 
     fn execute_browser_command(&mut self, command: BrowserCommand) -> Task<Message> {
@@ -2134,6 +2244,24 @@ impl Gui {
             iced::widget::container::Style::default()
                 .background(Color::from_rgba8(128, 128, 128, 0.12))
         });
+        let picker_actions = self.picker.map(|picker| {
+            let selection_label = match (picker.kind, picker.multiple) {
+                (PickerKind::File, false) => "Select file",
+                (PickerKind::File, true) => "Select files",
+                (PickerKind::Folder, false) => "Select folder",
+                (PickerKind::Folder, true) => "Select folders",
+            };
+            container(
+                row![
+                    button(text("Cancel")).on_press(Message::CancelPicker),
+                    Space::with_width(Length::Fill),
+                    button(text(selection_label)).on_press(Message::ConfirmPicker),
+                ]
+                .spacing(8),
+            )
+            .padding([6, 0])
+            .width(Length::Fill)
+        });
         address_bar = address_bar.push(tooltip(
             button(icon_text("settings")).on_press(Message::ShowPreferences),
             text(String::from("Preferences")),
@@ -2246,6 +2374,7 @@ impl Gui {
             .spacing(0)
             .height(Length::Fill);
         let file_content = column![quick_actions, browser]
+            .push_maybe(picker_actions)
             .spacing(8)
             .width(Length::Fill)
             .height(Length::Fill);

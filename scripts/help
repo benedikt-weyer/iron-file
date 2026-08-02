@@ -14,6 +14,8 @@ Run
 
 The Iced frontend accepts an optional location, for example `run ~/Documents`.
 Pass `-f` or `--follow` to keep it attached to the terminal and stream backend logs.
+Use `--mode picker` with `--file` or `--folder` and `--single` or `--multiple`
+to run the picker; accepted locations are printed one per line.
 
 The frontends start the backend automatically when it is not already running.
 

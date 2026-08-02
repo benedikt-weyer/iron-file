@@ -1,0 +1,10 @@
+[package]
+name = "xdg-desktop-portal-iron-file"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio = { version = "1", features = ["macros", "process", "rt-multi-thread"] }
+url = "2"
+zbus = { version = "4", features = ["tokio"] }

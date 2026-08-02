@@ -3,6 +3,7 @@ members = [
   "crates/backend",
   "crates/common",
   "crates/iced-frontend",
+  "crates/portal-filechooser",
   "crates/gtk-frontend",
 ]
 resolver = "3"
