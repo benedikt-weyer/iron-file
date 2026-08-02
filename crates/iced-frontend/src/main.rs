@@ -379,7 +379,9 @@ struct Gui {
     sidebar_resize: Option<(f32, u16, u16)>,
     icon_themes: Vec<String>,
     entry_icons: HashMap<PathBuf, Option<PathBuf>>,
+    entry_icon_cache: HashMap<(String, bool, Option<String>), Option<PathBuf>>,
     thumbnail_handles: HashMap<PathBuf, image::Handle>,
+    pending_thumbnail_paths: Vec<PathBuf>,
     selected_entries: HashSet<PathBuf>,
     paste_buffer: Option<PasteBuffer>,
     pending_delete: Option<Vec<PathBuf>>,
@@ -804,6 +806,10 @@ enum Message {
         directory: PathBuf,
         entry: Result<proto::FileEntry, String>,
     },
+    DirectoryEntriesLoaded {
+        directory: PathBuf,
+        entries: Result<Vec<proto::FileEntry>, String>,
+    },
     BrowseFinished {
         result: Result<BrowseResponse, String>,
         history: HistoryRequest,
@@ -956,7 +962,9 @@ impl Gui {
             sidebar_resize: None,
             icon_themes: available_icon_themes(),
             entry_icons: HashMap::new(),
+            entry_icon_cache: HashMap::new(),
             thumbnail_handles: HashMap::new(),
+            pending_thumbnail_paths: Vec::new(),
             selected_entries: HashSet::new(),
             paste_buffer: None,
             pending_delete: None,
@@ -1937,6 +1945,74 @@ impl Gui {
                 eprintln!("[iron-file thumbnails] {error}");
                 Task::none()
             }
+            Message::DirectoryEntriesLoaded { directory, entries } => match entries {
+                Ok(entries) if self.directory_path == directory => {
+                    let icon_theme = self.active_browser_settings().icon_theme;
+                    let icon_names = gio_icon_names_batch(
+                        &entries
+                            .iter()
+                            .filter(|entry| !entry.directory_complete)
+                            .map(|entry| PathBuf::from(&entry.path))
+                            .collect::<Vec<_>>(),
+                    );
+                    let mut completed = None;
+                    for entry in entries {
+                        if entry.directory_complete {
+                            completed = Some(entry);
+                            continue;
+                        }
+                        let path = PathBuf::from(&entry.path);
+                        let now = Instant::now();
+                        if let Some(performance) = &mut self.folder_load_performance {
+                            performance.first_item_at.get_or_insert(now);
+                            performance.item_rendered_at.push(now);
+                            performance.entry_path_us += entry.entry_path_ms;
+                            performance.entry_symlink_us += entry.entry_symlink_ms;
+                            performance.entry_metadata_us += entry.entry_metadata_ms;
+                            performance.entry_timestamps_us += entry.entry_timestamps_ms;
+                        }
+                        let icon = self.cached_entry_icon_path_with_names(
+                            &icon_theme,
+                            &entry,
+                            icon_names.get(&path),
+                        );
+                        self.entry_icons.insert(path.clone(), icon);
+                        if !entry.is_directory && !self.thumbnail_handles.contains_key(&path) {
+                            if let Some(performance) = &mut self.folder_load_performance {
+                                performance.thumbnails_total += 1;
+                            }
+                            self.pending_thumbnail_paths.push(path);
+                        }
+                        self.entries.push(entry);
+                    }
+                    let sort_order = self.current_sort_order();
+                    sort_entries(&mut self.entries, sort_order);
+                    self.status = format!("{} entries", self.entries.len());
+                    if let Some(entry) = completed {
+                        if let Some(performance) = &mut self.folder_load_performance {
+                            performance.enumeration_ms = Some(entry.directory_enumeration_ms);
+                            performance.expected_entries = entry.directory_entry_count as usize;
+                            performance.displayed_at = Some(Instant::now());
+                        }
+                        let thumbnail_directory = self.active_browser_settings().thumbnail_location;
+                        return Task::batch(self.pending_thumbnail_paths.drain(..).map(|path| {
+                            Task::perform(
+                                create_thumbnail(path.clone(), thumbnail_directory.clone()),
+                                move |thumbnail_path| Message::ThumbnailGenerated {
+                                    path: path.clone(),
+                                    thumbnail_path,
+                                },
+                            )
+                        }));
+                    }
+                    Task::none()
+                }
+                Ok(_) => Task::none(),
+                Err(error) => self.update(Message::DirectoryEntryLoaded {
+                    directory,
+                    entry: Err(error),
+                }),
+            },
             Message::DirectoryEntryLoaded {
                 directory,
                 entry: Ok(entry),
@@ -1953,7 +2029,16 @@ impl Gui {
                             performance.thumbnails_settled_at = Some(Instant::now());
                         }
                     }
-                    return Task::none();
+                    let thumbnail_directory = self.active_browser_settings().thumbnail_location;
+                    return Task::batch(self.pending_thumbnail_paths.drain(..).map(|path| {
+                        Task::perform(
+                            create_thumbnail(path.clone(), thumbnail_directory.clone()),
+                            move |thumbnail_path| Message::ThumbnailGenerated {
+                                path: path.clone(),
+                                thumbnail_path,
+                            },
+                        )
+                    }));
                 }
                 let path = PathBuf::from(&entry.path);
                 if let Some(performance) = &mut self.folder_load_performance
@@ -1969,8 +2054,8 @@ impl Gui {
                     performance.entry_timestamps_us += entry.entry_timestamps_ms;
                 }
                 let icon_theme = self.active_browser_settings().icon_theme;
-                self.entry_icons
-                    .insert(path.clone(), themed_entry_icon_path(&icon_theme, &entry));
+                let icon = self.cached_entry_icon_path(&icon_theme, &entry);
+                self.entry_icons.insert(path.clone(), icon);
                 let is_directory = entry.is_directory;
                 let thumbnail_is_loaded = self.thumbnail_handles.contains_key(&path);
                 let sort_order = self.current_sort_order();
@@ -1983,14 +2068,8 @@ impl Gui {
                     if let Some(performance) = &mut self.folder_load_performance {
                         performance.thumbnails_total += 1;
                     }
-                    let thumbnail_directory = self.active_browser_settings().thumbnail_location;
-                    Task::perform(
-                        create_thumbnail(path.clone(), thumbnail_directory),
-                        move |thumbnail_path| Message::ThumbnailGenerated {
-                            path: path.clone(),
-                            thumbnail_path,
-                        },
-                    )
+                    self.pending_thumbnail_paths.push(path);
+                    Task::none()
                 }
             }
             Message::DirectoryEntryLoaded {
@@ -2197,15 +2276,49 @@ impl Gui {
 
     fn refresh_entry_icons(&mut self) {
         let icon_theme = self.active_browser_settings().icon_theme;
-        self.entry_icons = self
-            .entries
+        self.entry_icon_cache.clear();
+        let entries = self.entries.clone();
+        self.entry_icons = entries
             .iter()
             .map(|entry| {
-                let path = PathBuf::from(&entry.path);
-                let icon = themed_entry_icon_path(&icon_theme, entry);
-                (path, icon)
+                (
+                    PathBuf::from(&entry.path),
+                    self.cached_entry_icon_path(&icon_theme, entry),
+                )
             })
             .collect();
+    }
+
+    fn cached_entry_icon_path(&mut self, theme: &str, entry: &proto::FileEntry) -> Option<PathBuf> {
+        self.cached_entry_icon_path_with_names(theme, entry, None)
+    }
+
+    fn cached_entry_icon_path_with_names(
+        &mut self,
+        theme: &str,
+        entry: &proto::FileEntry,
+        icon_names: Option<&Vec<String>>,
+    ) -> Option<PathBuf> {
+        let key = (
+            theme.to_owned(),
+            entry.is_directory,
+            (!entry.is_directory).then(|| {
+                Path::new(&entry.path)
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+            }),
+        );
+        self.entry_icon_cache
+            .entry(key)
+            .or_insert_with(|| {
+                icon_names.map_or_else(
+                    || themed_entry_icon_path(theme, entry),
+                    |icons| themed_icon_path(theme, icons),
+                )
+            })
+            .clone()
     }
 
     fn handle_entry_click(&mut self, path: PathBuf, is_directory: bool) -> Task<Message> {
@@ -3136,6 +3249,7 @@ impl Gui {
                 self.record_history(self.directory_path.clone(), history);
                 let _ = directory;
                 self.entries.clear();
+                self.pending_thumbnail_paths.clear();
                 self.selected_entries.clear();
                 self.selection_anchor = None;
                 if !preserve_thumbnails {
@@ -3146,9 +3260,9 @@ impl Gui {
                 self.status = "Loading folder contents".into();
                 let directory = self.directory_path.clone();
                 Task::run(stream_directory(directory.clone()), move |entry| {
-                    Message::DirectoryEntryLoaded {
+                    Message::DirectoryEntriesLoaded {
                         directory: directory.clone(),
-                        entry,
+                        entries: entry,
                     }
                 })
             }

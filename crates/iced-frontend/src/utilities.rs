@@ -72,9 +72,13 @@ pub(super) fn themed_entry_icon_path(theme: &str, entry: &proto::FileEntry) -> O
         return None;
     }
     let icons = gio_icon_names(Path::new(&entry.path));
+    themed_icon_path(theme, &icons)
+}
+
+pub(super) fn themed_icon_path(theme: &str, icons: &[String]) -> Option<PathBuf> {
     for root in icon_theme_directories(theme) {
         for size in ["128x128", "96x96", "64x64", "48x48", "scalable"] {
-            for icon in &icons {
+            for icon in icons {
                 for category in ["mimetypes", "places", "actions", "status", "apps"] {
                     let path = root.join(size).join(category).join(format!("{icon}.svg"));
                     if path.is_file() {
@@ -85,6 +89,32 @@ pub(super) fn themed_entry_icon_path(theme: &str, entry: &proto::FileEntry) -> O
         }
     }
     None
+}
+
+pub(super) fn gio_icon_names_batch(paths: &[PathBuf]) -> HashMap<PathBuf, Vec<String>> {
+    let Ok(output) = Command::new("gio")
+        .args(["info", "-a", "standard::icon"])
+        .args(paths)
+        .output()
+    else {
+        return HashMap::new();
+    };
+    let mut result = HashMap::new();
+    let mut path = None;
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Some(value) = line.strip_prefix("local path: ") {
+            path = Some(PathBuf::from(value));
+        }
+        if let Some(value) = line.trim().strip_prefix("standard::icon: ")
+            && let Some(path) = path.take()
+        {
+            result.insert(
+                path,
+                value.split(',').map(str::trim).map(str::to_owned).collect(),
+            );
+        }
+    }
+    result
 }
 
 pub(super) fn gio_icon_names(path: &Path) -> Vec<String> {

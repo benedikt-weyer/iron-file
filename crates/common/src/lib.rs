@@ -32,6 +32,7 @@ const BACKEND_MODE_ENV: &str = "IRON_FILE_BACKEND_MODE";
 const BACKEND_BIN_ENV: &str = "IRON_FILE_BACKEND_BIN";
 const STARTUP_ATTEMPTS: usize = 50;
 const STARTUP_RETRY_DELAY: Duration = Duration::from_millis(100);
+const DIRECTORY_STREAM_BATCH_SIZE: usize = 256;
 
 pub fn socket_path() -> PathBuf {
     std::env::var_os("IRON_FILE_SOCKET")
@@ -313,7 +314,7 @@ pub async fn extract_archives(
 
 pub fn stream_directory(
     path: PathBuf,
-) -> impl tokio_stream::Stream<Item = Result<proto::FileEntry, String>> {
+) -> impl tokio_stream::Stream<Item = Result<Vec<proto::FileEntry>, String>> {
     async_stream::stream! {
         let mut client = match connect_or_start().await {
             Ok(client) => client,
@@ -334,15 +335,25 @@ pub fn stream_directory(
                 return;
             }
         };
+        let mut batch = Vec::with_capacity(DIRECTORY_STREAM_BATCH_SIZE);
         loop {
             match entries.message().await {
-                Ok(Some(entry)) => yield Ok(entry),
+                Ok(Some(entry)) => {
+                    let complete = entry.directory_complete;
+                    batch.push(entry);
+                    if batch.len() == DIRECTORY_STREAM_BATCH_SIZE || complete {
+                        yield Ok(std::mem::take(&mut batch));
+                    }
+                }
                 Ok(None) => break,
                 Err(error) => {
                     yield Err(error.to_string());
                     break;
                 }
             }
+        }
+        if !batch.is_empty() {
+            yield Ok(batch);
         }
     }
 }
