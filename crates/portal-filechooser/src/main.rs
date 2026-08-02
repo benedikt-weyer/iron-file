@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
-    env,
+    env, fs,
+    os::fd::AsRawFd,
     path::{Component, Path, PathBuf},
     process::Stdio,
 };
@@ -9,7 +10,7 @@ use tokio::process::Command;
 use url::Url;
 use zbus::{
     fdo,
-    zvariant::{OwnedObjectPath, OwnedValue, Value},
+    zvariant::{OwnedFd, OwnedObjectPath, OwnedValue, Value},
 };
 
 const BUS_NAME: &str = "org.freedesktop.impl.portal.desktop.iron-file";
@@ -17,6 +18,51 @@ const OBJECT_PATH: &str = "/org/freedesktop/portal/desktop";
 
 struct FileChooser {
     executable: PathBuf,
+}
+
+struct OpenUri {
+    executable: PathBuf,
+}
+
+#[zbus::interface(name = "org.freedesktop.impl.portal.OpenURI")]
+impl OpenUri {
+    #[zbus(property)]
+    fn version(&self) -> u32 {
+        3
+    }
+
+    async fn open_file(
+        &self,
+        _handle: OwnedObjectPath,
+        _app_id: String,
+        _parent_window: String,
+        fd: OwnedFd,
+        _options: HashMap<String, OwnedValue>,
+    ) -> fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        let path = path_from_fd(&fd)?;
+        launch_associated_application(&path).await?;
+        Ok((0, HashMap::new()))
+    }
+
+    async fn open_directory(
+        &self,
+        _handle: OwnedObjectPath,
+        _app_id: String,
+        _parent_window: String,
+        fd: OwnedFd,
+        _options: HashMap<String, OwnedValue>,
+    ) -> fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        let path = path_from_fd(&fd)?;
+        let directory = if path.is_dir() {
+            path
+        } else {
+            path.parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| fdo::Error::Failed("file has no parent directory".into()))?
+        };
+        launch_file_manager(&self.executable, &directory).await?;
+        Ok((0, HashMap::new()))
+    }
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.FileChooser")]
@@ -115,6 +161,27 @@ impl FileChooser {
     }
 }
 
+fn path_from_fd(fd: &OwnedFd) -> fdo::Result<PathBuf> {
+    fs::read_link(format!("/proc/self/fd/{}", fd.as_raw_fd()))
+        .map_err(|error| fdo::Error::Failed(format!("could not resolve file descriptor: {error}")))
+}
+
+async fn launch_associated_application(path: &Path) -> fdo::Result<()> {
+    Command::new("xdg-open")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| fdo::Error::Failed(format!("could not open file: {error}")))
+}
+
+async fn launch_file_manager(executable: &Path, directory: &Path) -> fdo::Result<()> {
+    Command::new(executable)
+        .arg(directory)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| fdo::Error::Failed(format!("could not open directory: {error}")))
+}
+
 fn response(paths: Vec<PathBuf>) -> fdo::Result<(u32, HashMap<String, OwnedValue>)> {
     let uris = paths
         .iter()
@@ -165,7 +232,9 @@ fn valid_file_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::valid_file_name;
+    use super::{path_from_fd, valid_file_name};
+    use std::{fs::File, os::fd::OwnedFd, path::PathBuf};
+    use zbus::zvariant::OwnedFd as ZbusOwnedFd;
 
     #[test]
     fn save_names_must_be_simple_file_names() {
@@ -173,6 +242,15 @@ mod tests {
         assert!(!valid_file_name(""));
         assert!(!valid_file_name("../report.txt"));
         assert!(!valid_file_name("/tmp/report.txt"));
+    }
+
+    #[test]
+    fn resolves_paths_from_file_descriptors() {
+        let file = File::open("/dev/null").unwrap();
+        let fd: OwnedFd = file.into();
+        let fd: ZbusOwnedFd = fd.into();
+
+        assert_eq!(path_from_fd(&fd).unwrap(), PathBuf::from("/dev/null"));
     }
 }
 
@@ -190,7 +268,13 @@ async fn main() -> zbus::Result<()> {
         .unwrap_or_else(|| PathBuf::from("iron-file-iced"));
     let _connection = zbus::ConnectionBuilder::session()?
         .name(BUS_NAME)?
-        .serve_at(OBJECT_PATH, FileChooser { executable })?
+        .serve_at(
+            OBJECT_PATH,
+            FileChooser {
+                executable: executable.clone(),
+            },
+        )?
+        .serve_at(OBJECT_PATH, OpenUri { executable })?
         .build()
         .await?;
     std::future::pending::<()>().await;

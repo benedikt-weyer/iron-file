@@ -10,7 +10,7 @@ gRPC over a local Unix-domain socket to browse files through one shared backend.
 | `iron-file-iced` | Iced frontend | Default file-browser GUI client |
 | `iron-file-gtk` | GTK4 frontend | GTK4 file-browser GUI client |
 | `iron-file-common` | library | Shared protobuf, gRPC client, socket, and launcher logic |
-| `xdg-desktop-portal-iron-file` | portal backend | D-Bus FileChooser backend that launches Iron File picker mode |
+| `xdg-desktop-portal-iron-file` | portal backend | D-Bus FileChooser and OpenURI backend |
 
 The mdBook documentation is in [`docs/`](docs/README.md).
 

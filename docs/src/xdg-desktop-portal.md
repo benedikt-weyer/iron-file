@@ -1,8 +1,9 @@
 # XDG Desktop Portal
 
 `xdg-desktop-portal-iron-file` implements
-`org.freedesktop.impl.portal.FileChooser.OpenFile`, `SaveFile`, and
-`SaveFiles`. `OpenFile` translates the portal options `directory` and
+`org.freedesktop.impl.portal.FileChooser.OpenFile`, `SaveFile`, `SaveFiles`,
+`org.freedesktop.impl.portal.OpenURI.OpenFile`, and `OpenDirectory`.
+FileChooser `OpenFile` translates the portal options `directory` and
 `multiple` into Iron File picker flags and returns selected locations as
 normalized `file://` URIs.
 
@@ -12,6 +13,10 @@ input bar and can be reset to the portal-provided original. `SaveFiles` joins
 the selected folder with every name in `files`, retaining their order. Names
 must be simple file names, so the backend does not accept path traversal or
 absolute paths from a portal caller.
+
+OpenURI `OpenFile` opens the descriptor's resolved path with its associated
+desktop application. `OpenDirectory` opens Iron File at the target directory,
+or at a file's parent directory.
 
 ## NixOS Package Contents
 
@@ -28,13 +33,14 @@ xdg.portal = {
   config.common = {
     default = [ "gnome" "gtk" ];
     "org.freedesktop.impl.portal.FileChooser" = [ "iron-file" ];
+    "org.freedesktop.impl.portal.OpenURI" = [ "iron-file" ];
   };
 };
 ```
 
-The explicit FileChooser entry routes selection requests to Iron File. The
-default list keeps GNOME and GTK as providers for portal interfaces that Iron
-File does not implement.
+The explicit entries route file selection and local file-opening requests to
+Iron File. The default list keeps GNOME and GTK as providers for portal
+interfaces that Iron File does not implement.
 
 After rebuilding NixOS, restart the user portal services or log in again:
 
