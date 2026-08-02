@@ -6,6 +6,7 @@ service FileBrowser {
   rpc OpenPath(OpenPathRequest) returns (BrowseResponse);
   rpc ListDirectory(ListDirectoryRequest) returns (stream FileEntry);
   rpc CreateThumbnail(ThumbnailRequest) returns (ThumbnailResponse);
+  rpc InspectEntry(EntryInfoRequest) returns (EntryInfoResponse);
   rpc CopyEntries(FileCommandRequest) returns (FileCommandResponse);
   rpc DeleteEntries(DeleteEntriesRequest) returns (FileCommandResponse);
   rpc CreateSymlinks(FileCommandRequest) returns (FileCommandResponse);
@@ -45,6 +46,20 @@ message ThumbnailRequest {
 message ThumbnailResponse {
   string path = 1;
   string thumbnail_path = 2;
+}
+
+message EntryInfoRequest {
+  string path = 1;
+}
+
+message EntryInfoField {
+  string label = 1;
+  string value = 2;
+}
+
+message EntryInfoResponse {
+  string name = 1;
+  repeated EntryInfoField fields = 2;
 }
 
 message FileCommandRequest {

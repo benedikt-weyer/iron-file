@@ -3,6 +3,7 @@ use std::{
     io::{self, BufWriter},
     path::{Path, PathBuf},
     pin::Pin,
+    time::{Duration, SystemTime},
 };
 
 use fs2::FileExt;
@@ -22,9 +23,9 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter, write::FileOptions};
 
 use proto::{
     BrowseResponse, BrowserError, CreateEntryRequest, DeleteEntriesRequest, Directory,
-    FileCommandRequest, FileCommandResponse, FileContent, FileEntry, ListDirectoryRequest,
-    LogEntry, LogStreamRequest, OpenPathRequest, RenameEntryRequest, ThumbnailRequest,
-    ThumbnailResponse,
+    EntryInfoField, EntryInfoRequest, EntryInfoResponse, FileCommandRequest, FileCommandResponse,
+    FileContent, FileEntry, ListDirectoryRequest, LogEntry, LogStreamRequest, OpenPathRequest,
+    RenameEntryRequest, ThumbnailRequest, ThumbnailResponse,
     browse_response::Payload,
     file_browser_server::{FileBrowser, FileBrowserServer},
 };
@@ -105,6 +106,17 @@ impl FileBrowser for FileBrowserService {
             path: path.display().to_string(),
             thumbnail_path,
         }))
+    }
+
+    async fn inspect_entry(
+        &self,
+        request: Request<EntryInfoRequest>,
+    ) -> Result<Response<EntryInfoResponse>, Status> {
+        let path = PathBuf::from(request.into_inner().path);
+        self.log(format!("Inspecting {}", path.display()));
+        entry_info(&path)
+            .map(Response::new)
+            .map_err(Status::internal)
     }
 
     async fn copy_entries(
@@ -369,6 +381,121 @@ fn browse(path: PathBuf) -> BrowseResponse {
     BrowseResponse {
         path: display_path,
         payload: Some(payload),
+    }
+}
+
+fn entry_info(path: &Path) -> Result<EntryInfoResponse, String> {
+    use lofty::{
+        file::{AudioFile, TaggedFileExt},
+        tag::Accessor,
+    };
+
+    let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| path.display().to_string());
+    let mut fields = vec![
+        info_field("Location", path.display()),
+        info_field("Type", if metadata.is_dir() { "Folder" } else { "File" }),
+    ];
+
+    if metadata.is_file() {
+        fields.push(info_field("Size", format_file_size(metadata.len())));
+        if let Some(extension) = path.extension().and_then(|extension| extension.to_str()) {
+            fields.push(info_field("Extension", extension.to_ascii_uppercase()));
+        }
+    } else if metadata.is_dir()
+        && let Ok(entries) = std::fs::read_dir(path)
+    {
+        fields.push(info_field("Items", entries.count()));
+    }
+
+    if let Ok(modified) = metadata.modified() {
+        fields.push(info_field("Modified", format_time_ago(modified)));
+    }
+
+    if metadata.is_file() {
+        if let Ok(reader) = ImageReader::open(path)
+            && let Ok((width, height)) = reader.into_dimensions()
+        {
+            fields.push(info_field("Dimensions", format!("{width} x {height} px")));
+        }
+
+        if let Ok(audio) = lofty::read_from_path(path) {
+            let properties = audio.properties();
+            if !properties.duration().is_zero() {
+                fields.push(info_field(
+                    "Duration",
+                    format_duration(properties.duration()),
+                ));
+            }
+            if let Some(value) = properties.audio_bitrate().or(properties.overall_bitrate()) {
+                fields.push(info_field("Bitrate", format!("{value} kbps")));
+            }
+            if let Some(value) = properties.sample_rate() {
+                fields.push(info_field("Sample rate", format!("{value} Hz")));
+            }
+            if let Some(value) = properties.channels() {
+                fields.push(info_field("Channels", value));
+            }
+            if let Some(value) = properties.bit_depth() {
+                fields.push(info_field("Bit depth", format!("{value}-bit")));
+            }
+            if let Some(tag) = audio.primary_tag().or_else(|| audio.first_tag()) {
+                if let Some(value) = tag.title() {
+                    fields.push(info_field("Title", value));
+                }
+                if let Some(value) = tag.artist() {
+                    fields.push(info_field("Artist", value));
+                }
+                if let Some(value) = tag.album() {
+                    fields.push(info_field("Album", value));
+                }
+            }
+        }
+    }
+
+    Ok(EntryInfoResponse { name, fields })
+}
+
+fn info_field(label: impl Into<String>, value: impl ToString) -> EntryInfoField {
+    EntryInfoField {
+        label: label.into(),
+        value: value.to_string(),
+    }
+}
+
+fn format_file_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+fn format_duration(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    format!("{}:{:02}", seconds / 60, seconds % 60)
+}
+
+fn format_time_ago(time: SystemTime) -> String {
+    let Ok(elapsed) = SystemTime::now().duration_since(time) else {
+        return "In the future".into();
+    };
+    match elapsed.as_secs() {
+        0..=59 => "Just now".into(),
+        seconds @ 60..=3_599 => format!("{} minutes ago", seconds / 60),
+        seconds @ 3_600..=86_399 => format!("{} hours ago", seconds / 3_600),
+        seconds => format!("{} days ago", seconds / 86_400),
     }
 }
 

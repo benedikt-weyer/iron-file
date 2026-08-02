@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 fs2 = "0.4"
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "tiff", "webp"] }
+lofty = "0.22"
 iron-file-common = { path = "../common" }
 prost = "0.14"
 sha1 = "0.10"

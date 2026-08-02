@@ -23,8 +23,8 @@ pub mod proto {
 }
 
 use proto::{
-    CreateEntryRequest, DeleteEntriesRequest, FileCommandRequest, ListDirectoryRequest,
-    LogStreamRequest, OpenPathRequest, RenameEntryRequest, ThumbnailRequest,
+    CreateEntryRequest, DeleteEntriesRequest, EntryInfoRequest, FileCommandRequest,
+    ListDirectoryRequest, LogStreamRequest, OpenPathRequest, RenameEntryRequest, ThumbnailRequest,
     file_browser_client::FileBrowserClient,
 };
 
@@ -90,6 +90,17 @@ pub async fn create_thumbnail(
         }))
         .await
         .map(|response| response.into_inner().thumbnail_path)
+        .map_err(|error| error.to_string())
+}
+
+pub async fn inspect_entry(path: PathBuf) -> Result<proto::EntryInfoResponse, String> {
+    let mut client = connect_or_start().await?;
+    client
+        .inspect_entry(Request::new(EntryInfoRequest {
+            path: path.display().to_string(),
+        }))
+        .await
+        .map(|response| response.into_inner())
         .map_err(|error| error.to_string())
 }
 

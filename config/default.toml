@@ -21,6 +21,7 @@ sidebar_width = 180
 icon_theme = "bundled"
 thumbnail_location = "~/.cache/iron-file/thumbnails"
 file_context_menu_items = [
+  "info",
   "open",
   "rename",
   "copy-location",
@@ -28,6 +29,7 @@ file_context_menu_items = [
   "delete-selection",
 ]
 folder_context_menu_items = [
+  "info",
   "create-folder",
   "create-file",
   "rename",

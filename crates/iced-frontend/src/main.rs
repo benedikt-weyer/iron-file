@@ -34,7 +34,8 @@ use iron_file_common::{
         QuickToolbarItem, SidebarLocation,
     },
     copy_entries, create_entry, create_symlinks, create_thumbnail, delete_entries, ensure_backend,
-    extract_archives, pipe_backend_logs, proto, rename_entry, restart_backend, stream_directory,
+    extract_archives, inspect_entry, pipe_backend_logs, proto, rename_entry, restart_backend,
+    stream_directory,
 };
 use proto::{BrowseResponse, browse_response::Payload};
 use serde::Deserialize;
@@ -345,6 +346,7 @@ struct Gui {
     dark_accent_input: String,
     accent_picker: Option<AccentPickerState>,
     context_entry: Option<ContextEntry>,
+    pending_info: Option<InfoDialog>,
     pointer_position: Point,
     context_position: Point,
     dragging_sidebar_location: Option<PathBuf>,
@@ -418,6 +420,19 @@ struct ContextEntry {
     path: PathBuf,
     is_directory: bool,
     opener: Option<Result<String, String>>,
+}
+
+#[derive(Debug, Clone)]
+enum InfoDialog {
+    Loading(PathBuf),
+    Loaded(EntryInfo),
+    Error { path: PathBuf, error: String },
+}
+
+#[derive(Debug, Clone)]
+struct EntryInfo {
+    name: String,
+    rows: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -692,6 +707,12 @@ enum Message {
     },
     ContextPointerMoved(Point),
     CloseFolderContext,
+    RequestEntryInfo(PathBuf),
+    EntryInfoLoaded {
+        path: PathBuf,
+        result: Result<proto::EntryInfoResponse, String>,
+    },
+    CloseEntryInfo,
     OpenContextFile,
     OpenTerminalHere,
     AddContextFolderToSidebar,
@@ -858,6 +879,7 @@ impl Gui {
             dark_accent_input: theme.dark_highlight,
             accent_picker: None,
             context_entry: None,
+            pending_info: None,
             pointer_position: Point::ORIGIN,
             context_position: Point::ORIGIN,
             dragging_sidebar_location: None,
@@ -1518,6 +1540,38 @@ impl Gui {
             }
             Message::CloseFolderContext => {
                 self.context_entry = None;
+                Task::none()
+            }
+            Message::RequestEntryInfo(path) => {
+                self.context_entry = None;
+                self.pending_info = Some(InfoDialog::Loading(path.clone()));
+                Task::perform(inspect_entry(path.clone()), move |result| {
+                    Message::EntryInfoLoaded {
+                        path: path.clone(),
+                        result,
+                    }
+                })
+            }
+            Message::EntryInfoLoaded { path, result } => {
+                if !matches!(self.pending_info, Some(InfoDialog::Loading(ref current)) if current == &path)
+                {
+                    return Task::none();
+                }
+                self.pending_info = Some(match result {
+                    Ok(info) => InfoDialog::Loaded(EntryInfo {
+                        name: info.name,
+                        rows: info
+                            .fields
+                            .into_iter()
+                            .map(|field| (field.label, field.value))
+                            .collect(),
+                    }),
+                    Err(error) => InfoDialog::Error { path, error },
+                });
+                Task::none()
+            }
+            Message::CloseEntryInfo => {
+                self.pending_info = None;
                 Task::none()
             }
             Message::OpenContextFile => {
@@ -3271,6 +3325,13 @@ impl Gui {
                         continue;
                     }
                     let action: Option<Element<'_, Message>> = match item {
+                        ContextMenuItem::Info => Some(
+                            button(row![icon_text("info").size(16), text("Info")].spacing(8))
+                                .width(Length::Fill)
+                                .style(context_menu_button_style)
+                                .on_press(Message::RequestEntryInfo(entry.path.clone()))
+                                .into(),
+                        ),
                         ContextMenuItem::CreateFolder if entry.is_directory => Some(
                             button(
                                 row![icon_text("folder-plus").size(16), text("Create folder")]
@@ -3736,6 +3797,107 @@ impl Gui {
             .width(Length::Fill)
             .height(Length::Fill)
         });
+        let info_dialog = self.pending_info.as_ref().map(|dialog_state| {
+            const INFO_DIALOG_WIDTH: f32 = 460.0;
+            let dialog: Element<'_, Message> = match dialog_state {
+                InfoDialog::Loading(path) => container(
+                    column![
+                        text("Info").size(20),
+                        text(path.display().to_string()),
+                        text("Loading details..."),
+                    ]
+                    .spacing(12),
+                )
+                .width(Length::Fixed(INFO_DIALOG_WIDTH))
+                .padding(16)
+                .into(),
+                InfoDialog::Loaded(info) => {
+                    let rows =
+                        info.rows
+                            .iter()
+                            .fold(column![].spacing(8), |column, (label, value)| {
+                                column.push(
+                                    row![
+                                        text(label).width(Length::Fixed(112.0)),
+                                        text(value).width(Length::Fill),
+                                    ]
+                                    .spacing(12),
+                                )
+                            });
+                    container(
+                        column![
+                            text("Info").size(20),
+                            text(&info.name),
+                            scrollable(rows).height(Length::Fixed(300.0)),
+                            row![
+                                Space::with_width(Length::Fill),
+                                button(text("Close")).on_press(Message::CloseEntryInfo)
+                            ],
+                        ]
+                        .spacing(12),
+                    )
+                    .width(Length::Fixed(INFO_DIALOG_WIDTH))
+                    .padding(16)
+                    .into()
+                }
+                InfoDialog::Error { path, error } => container(
+                    column![
+                        text("Info").size(20),
+                        text(path.display().to_string()),
+                        text(format!("Unable to read details: {error}")),
+                        row![
+                            Space::with_width(Length::Fill),
+                            button(text("Close")).on_press(Message::CloseEntryInfo)
+                        ],
+                    ]
+                    .spacing(12),
+                )
+                .width(Length::Fixed(INFO_DIALOG_WIDTH))
+                .padding(16)
+                .into(),
+            };
+            let theme_settings = self.active_theme_settings();
+            let blur_strength = if theme_settings.background_opacity < 100 {
+                theme_settings.context_menu_blur_strength.min(5)
+            } else {
+                0
+            };
+            let blur_kernel_size = theme_settings
+                .context_menu_blur_kernel_size
+                .effective_size(blur_strength);
+            let dialog = container(dialog).style(|theme: &Theme| {
+                iced::widget::container::Style::default()
+                    .background(theme.palette().background)
+                    .border(Border {
+                        color: theme.palette().primary,
+                        width: 1.0,
+                        radius: border_radius().into(),
+                    })
+            });
+            let blur: Element<'_, Message> = if blur_strength > 0 {
+                iced::widget::shader::Shader::new(backdrop_blur::BackdropBlur::new(
+                    blur_strength,
+                    blur_kernel_size,
+                ))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+            } else {
+                Space::new(Length::Fill, Length::Fill).into()
+            };
+            stack![
+                mouse_area(Space::new(Length::Fill, Length::Fill))
+                    .on_press(Message::CloseEntryInfo),
+                blur,
+                container(dialog)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+        });
 
         stack![page]
             .push_maybe(overlay)
@@ -3743,6 +3905,7 @@ impl Gui {
             .push_maybe(create_dialog)
             .push_maybe(rename_dialog)
             .push_maybe(compression_dialog)
+            .push_maybe(info_dialog)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()

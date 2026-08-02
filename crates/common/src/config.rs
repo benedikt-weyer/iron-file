@@ -208,6 +208,7 @@ pub enum BrowserLayout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ContextMenuItem {
+    Info,
     CreateFolder,
     CreateFile,
     Rename,
@@ -223,7 +224,8 @@ pub enum ContextMenuItem {
 }
 
 impl ContextMenuItem {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
+        Self::Info,
         Self::CreateFolder,
         Self::CreateFile,
         Self::Rename,
@@ -238,7 +240,8 @@ impl ContextMenuItem {
         Self::OpenTerminal,
     ];
 
-    pub const FILE_OPTIONS: [Self; 5] = [
+    pub const FILE_OPTIONS: [Self; 6] = [
+        Self::Info,
         Self::Open,
         Self::Rename,
         Self::CopyLocation,
@@ -246,7 +249,8 @@ impl ContextMenuItem {
         Self::DeleteSelection,
     ];
 
-    pub const FOLDER_OPTIONS: [Self; 11] = [
+    pub const FOLDER_OPTIONS: [Self; 12] = [
+        Self::Info,
         Self::CreateFolder,
         Self::CreateFile,
         Self::Rename,
@@ -264,6 +268,7 @@ impl ContextMenuItem {
 impl fmt::Display for ContextMenuItem {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::Info => "Info",
             Self::CreateFolder => "Create folder",
             Self::CreateFile => "Create file",
             Self::Rename => "Rename",
