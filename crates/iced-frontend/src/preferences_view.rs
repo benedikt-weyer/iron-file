@@ -443,7 +443,20 @@ impl Gui {
                     column![
                         row![
                             text("Keyboard shortcuts").size(18),
-                            self.preference_reset_button(PreferenceOption::KeyboardShortcuts),
+                            tooltip(
+                                button(icon_text("rotate-ccw").size(16)).on_press_maybe(
+                                    (!self.preference_matches_default(
+                                        PreferenceOption::KeyboardShortcuts
+                                    ))
+                                    .then_some(
+                                        Message::ResetPreference(
+                                            PreferenceOption::KeyboardShortcuts
+                                        )
+                                    ),
+                                ),
+                                text("Reset keyboard shortcuts"),
+                                tooltip::Position::Bottom,
+                            ),
                         ]
                         .spacing(8),
                         keyboard_shortcut_options,
