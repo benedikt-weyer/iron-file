@@ -151,6 +151,7 @@ impl Gui {
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .direction(modern_vertical_scrollbar())
+                    .smooth_scrolling(browser_settings.smooth_scrolling)
                     .style(modern_scrollable_style)
                     .into()
             })
@@ -330,6 +331,7 @@ impl Gui {
                 scrollable(entries)
                     .width(Length::FillPortion(1))
                     .direction(modern_vertical_scrollbar())
+                    .smooth_scrolling(browser_settings.smooth_scrolling)
                     .style(modern_scrollable_style)
                     .into()
             };
@@ -338,6 +340,7 @@ impl Gui {
                 scrollable(text(&self.content))
                     .width(Length::FillPortion(2))
                     .direction(modern_vertical_scrollbar())
+                    .smooth_scrolling(browser_settings.smooth_scrolling)
                     .style(modern_scrollable_style),
             ]
             .spacing(16)
@@ -351,6 +354,7 @@ impl Gui {
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .direction(modern_vertical_scrollbar())
+                .smooth_scrolling(browser_settings.smooth_scrolling)
                 .style(modern_scrollable_style)
                 .into()
         };
@@ -1265,6 +1269,7 @@ impl Gui {
     }
 
     fn sidebar_view(&self) -> Element<'_, Message> {
+        let browser_settings = self.active_browser_settings();
         let max_name_lines = usize::from(self.active_browser_settings().max_name_lines.clamp(1, 5));
         let name_height = 20.0 * max_name_lines as f32;
         let locations = self.active_sidebar_locations().into_iter().fold(
@@ -1405,6 +1410,7 @@ impl Gui {
         container(
             scrollable(sidebar_content)
                 .direction(modern_vertical_scrollbar())
+                .smooth_scrolling(browser_settings.smooth_scrolling)
                 .style(modern_scrollable_style),
         )
         .width(Length::Fixed(f32::from(self.sidebar_width())))

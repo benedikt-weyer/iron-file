@@ -386,6 +386,8 @@ impl fmt::Display for QuickToolbarItem {
 pub struct BrowserSettings {
     pub item_size: u16,
     pub layout: BrowserLayout,
+    #[serde(default = "default_smooth_scrolling")]
+    pub smooth_scrolling: bool,
     #[serde(default = "default_max_name_lines")]
     pub max_name_lines: u8,
     #[serde(default = "default_preview_enabled")]
@@ -810,6 +812,10 @@ fn default_preview_enabled() -> bool {
 
 fn default_max_name_lines() -> u8 {
     default_browser_settings().max_name_lines
+}
+
+fn default_smooth_scrolling() -> bool {
+    default_browser_settings().smooth_scrolling
 }
 
 fn default_show_hidden_files() -> bool {

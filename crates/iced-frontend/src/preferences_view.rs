@@ -61,6 +61,13 @@ impl Gui {
             ]
             .spacing(10),
             row![
+                toggler(browser.smooth_scrolling)
+                    .label("Smooth scrolling")
+                    .on_toggle(Message::SmoothScrollingToggled)
+                    .width(Length::Fill),
+                self.preference_reset_button(PreferenceOption::SmoothScrolling),
+            ],
+            row![
                 text("Maximum name lines"),
                 slider(1..=5, browser.max_name_lines, Message::MaxNameLinesChanged)
                     .width(Length::Fill),

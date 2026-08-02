@@ -591,6 +591,7 @@ enum PreferenceOption {
     KeyboardShortcuts,
     BorderRadius,
     Layout,
+    SmoothScrolling,
     ItemSize,
     MaxNameLines,
     Preview,
@@ -694,6 +695,7 @@ enum Message {
     ConfirmAccentPicker,
     CancelAccentPicker,
     BrowserLayoutSelected(BrowserLayout),
+    SmoothScrollingToggled(bool),
     BrowserItemSizeChanged(u16),
     MaxNameLinesChanged(u8),
     PreviewToggled(bool),
@@ -1439,6 +1441,12 @@ impl Gui {
                 self.save_browser_settings(browser);
                 Task::none()
             }
+            Message::SmoothScrollingToggled(smooth_scrolling) => {
+                let mut browser = self.active_browser_settings();
+                browser.smooth_scrolling = smooth_scrolling;
+                self.save_browser_settings(browser);
+                Task::none()
+            }
             Message::BrowserItemSizeChanged(item_size) => {
                 let mut browser = self.active_browser_settings();
                 browser.item_size = item_size;
@@ -1867,6 +1875,9 @@ impl Gui {
             }
             PreferenceOption::BorderRadius => theme.border_radius == theme_defaults.border_radius,
             PreferenceOption::Layout => browser.layout == browser_defaults.layout,
+            PreferenceOption::SmoothScrolling => {
+                browser.smooth_scrolling == browser_defaults.smooth_scrolling
+            }
             PreferenceOption::ItemSize => browser.item_size == browser_defaults.item_size,
             PreferenceOption::MaxNameLines => {
                 browser.max_name_lines == browser_defaults.max_name_lines
@@ -2441,6 +2452,7 @@ impl Gui {
                 }
             }
             PreferenceOption::Layout
+            | PreferenceOption::SmoothScrolling
             | PreferenceOption::ItemSize
             | PreferenceOption::MaxNameLines
             | PreferenceOption::Preview
@@ -2455,6 +2467,9 @@ impl Gui {
                 let mut browser = self.active_browser_settings();
                 match option {
                     PreferenceOption::Layout => browser.layout = defaults.layout,
+                    PreferenceOption::SmoothScrolling => {
+                        browser.smooth_scrolling = defaults.smooth_scrolling
+                    }
                     PreferenceOption::ItemSize => browser.item_size = defaults.item_size,
                     PreferenceOption::MaxNameLines => {
                         browser.max_name_lines = defaults.max_name_lines

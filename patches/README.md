@@ -9,3 +9,8 @@ Gaussian blur only within its bounds.
 Iron File vendors the patched crate at `vendor/iced-wgpu` and selects it through
 the workspace `[patch.crates-io]` override. The patch file remains here to make
 the renderer change auditable and to support rebasing onto a future Iced release.
+
+`vendor/iced-widget` similarly patches `iced_widget` 0.13.4 with an opt-in
+`Scrollable::smooth_scrolling` setting. It interpolates wheel-scroll targets
+across requested redraw frames while preserving Iced's original scrolling when
+disabled.
