@@ -1691,9 +1691,56 @@ impl Gui {
                     .thumbnails_settled_at
                     .map(|at| at.duration_since(load.started_at).as_millis())
                     .unwrap_or_default();
+                let item_milestones = [10, 25, 50, 75, 90]
+                    .into_iter()
+                    .filter_map(|percent| {
+                        let index = load
+                            .expected_entries
+                            .saturating_mul(percent)
+                            .div_ceil(100)
+                            .saturating_sub(1);
+                        load.item_rendered_at.get(index).map(|at| {
+                            format!(
+                                "  {percent}%: {} ms",
+                                at.duration_since(load.started_at).as_millis()
+                            )
+                        })
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let mut item_intervals = load
+                    .item_rendered_at
+                    .windows(2)
+                    .map(|timestamps| {
+                        timestamps[1].duration_since(timestamps[0]).as_secs_f64() * 1_000.0
+                    })
+                    .collect::<Vec<_>>();
+                item_intervals.sort_by(f64::total_cmp);
+                let item_render_stats = if item_intervals.is_empty() {
+                    "Item render intervals: unavailable".to_owned()
+                } else {
+                    let average = item_intervals.iter().sum::<f64>() / item_intervals.len() as f64;
+                    let percentile =
+                        |percent: usize| item_intervals[(item_intervals.len() - 1) * percent / 100];
+                    format!(
+                        "Item render interval: avg {average:.2} ms | min {:.2} ms | p5 {:.2} ms | p95 {:.2} ms | max {:.2} ms",
+                        item_intervals[0],
+                        percentile(5),
+                        percentile(95),
+                        item_intervals[item_intervals.len() - 1]
+                    )
+                };
+                let entry_count = load.item_rendered_at.len().max(1) as f64;
+                let backend_item_averages = format!(
+                    "Average backend item steps: path {:.3} ms | symlink {:.3} ms | metadata {:.3} ms | timestamps {:.3} ms",
+                    load.entry_path_us as f64 / entry_count / 1_000.0,
+                    load.entry_symlink_us as f64 / entry_count / 1_000.0,
+                    load.entry_metadata_us as f64 / entry_count / 1_000.0,
+                    load.entry_timestamps_us as f64 / entry_count / 1_000.0,
+                );
                 self.status = "Copied performance report to the clipboard".into();
                 iced::clipboard::write(format!(
-                    "Folder load: {}\nBrowse response: {} ms\nBackend enumeration: {} ms\nFirst item rendered: {} ms\nAll items displayed: {} ms\nAll thumbnails loaded: {} ms ({}/{})\nEntries: {}",
+                    "Folder load: {}\nBrowse response: {} ms\nBackend enumeration: {} ms\nFirst item rendered: {} ms\nAll items displayed: {} ms\nAll thumbnails loaded: {} ms ({}/{})\nEntries: {}\n\nItem render milestones:\n{}\n\n{}\n{}",
                     self.directory_path.display(),
                     self.last_folder_load_duration
                         .map(|duration| duration.as_millis())
@@ -1706,7 +1753,10 @@ impl Gui {
                     thumbnails_ms,
                     load.thumbnails_settled,
                     load.thumbnails_total,
-                    load.expected_entries
+                    load.expected_entries,
+                    item_milestones,
+                    item_render_stats,
+                    backend_item_averages,
                 ))
             }
             Message::RequestEntryInfo(path) => {
