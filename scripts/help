@@ -12,6 +12,9 @@ Run
   run-gtk                  Start the GTK4 frontend.
   run-backend              Start the backend only.
 
+The Iced frontend accepts an optional location, for example `run ~/Documents`.
+Pass `-f` or `--follow` to keep it attached to the terminal and stream backend logs.
+
 The frontends start the backend automatically when it is not already running.
 
 Cargo

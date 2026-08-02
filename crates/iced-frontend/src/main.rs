@@ -1,7 +1,9 @@
 use std::{
     cell::Cell,
     collections::{HashMap, HashSet},
-    env, fs,
+    env,
+    ffi::OsString,
+    fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     rc::Rc,
@@ -32,8 +34,8 @@ use tokio::runtime::Runtime;
 const DETACHED_ENV: &str = "IRON_FILE_DETACHED";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let follow_logs = follow_logs_requested();
-    if !follow_logs && !is_detached() {
+    let startup = startup_options();
+    if !startup.follow_logs && !is_detached() {
         detach()?;
         return Ok(());
     }
@@ -54,17 +56,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         })
         .run_with(move || {
-            let gui = Gui::new(follow_logs);
+            let gui = Gui::new(startup.follow_logs, startup.initial_path);
             let task = gui.load_initial_directory();
             (gui, task)
         })?;
     Ok(())
 }
 
-fn follow_logs_requested() -> bool {
-    env::args_os().skip(1).any(|argument| {
-        argument == std::ffi::OsStr::new("-f") || argument == std::ffi::OsStr::new("--follow")
-    })
+struct StartupOptions {
+    follow_logs: bool,
+    initial_path: Option<PathBuf>,
+}
+
+fn startup_options() -> StartupOptions {
+    parse_startup_options(env::args_os().skip(1))
+}
+
+fn parse_startup_options(arguments: impl IntoIterator<Item = OsString>) -> StartupOptions {
+    let mut options = StartupOptions {
+        follow_logs: false,
+        initial_path: None,
+    };
+
+    for argument in arguments {
+        if argument == "-f" || argument == "--follow" {
+            options.follow_logs = true;
+        } else if !argument.to_string_lossy().starts_with('-') && options.initial_path.is_none() {
+            options.initial_path = Some(PathBuf::from(argument));
+        }
+    }
+
+    options
 }
 
 fn is_detached() -> bool {
@@ -80,6 +102,28 @@ fn detach() -> std::io::Result<()> {
         .stderr(Stdio::null())
         .spawn()
         .map(|_| ())
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_a_positional_location_and_follow_flag() {
+        let options =
+            parse_startup_options(["-f", "/tmp/first", "/tmp/second"].map(OsString::from));
+
+        assert!(options.follow_logs);
+        assert_eq!(options.initial_path, Some(PathBuf::from("/tmp/first")));
+    }
+
+    #[test]
+    fn accepts_a_location_before_the_follow_flag() {
+        let options = parse_startup_options(["/tmp/first", "--follow"].map(OsString::from));
+
+        assert!(options.follow_logs);
+        assert_eq!(options.initial_path, Some(PathBuf::from("/tmp/first")));
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -428,8 +472,9 @@ impl Gui {
         })
     }
 
-    fn new(follow_logs: bool) -> Self {
-        let directory_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    fn new(follow_logs: bool, initial_path: Option<PathBuf>) -> Self {
+        let directory_path = initial_path
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         let config_store = ConfigStore::from_environment();
         let mut profiles = config_store.profiles().unwrap_or_default();
         if profiles.is_empty() {
@@ -505,7 +550,7 @@ impl Gui {
     }
 
     fn load_initial_directory(&self) -> Task<Message> {
-        let path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let path = self.directory_path.clone();
         let thumbnail_directory = self.active_browser_settings().thumbnail_location;
         Task::batch(
             fonts()
