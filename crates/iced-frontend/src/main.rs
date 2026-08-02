@@ -2274,15 +2274,19 @@ impl Gui {
             if entry.is_directory {
                 column.push(
                     mouse_area(
-                        button(row![icon, text(&entry.name)].spacing(8))
-                            .style(move |theme, status| {
-                                file_item_button_style(theme, status, is_selected)
-                            })
-                            .width(Length::Fill)
-                            .on_press(Message::EntryClicked {
-                                path: path.clone(),
-                                is_directory: true,
-                            }),
+                        button(
+                            row![icon, text(&entry.name)]
+                                .spacing(8)
+                                .align_y(iced::alignment::Vertical::Top),
+                        )
+                        .style(move |theme, status| {
+                            file_item_button_style(theme, status, is_selected)
+                        })
+                        .width(Length::Fill)
+                        .on_press(Message::EntryClicked {
+                            path: path.clone(),
+                            is_directory: true,
+                        }),
                     )
                     .on_right_press(Message::ShowEntryContext {
                         path: path.clone(),
@@ -2293,15 +2297,19 @@ impl Gui {
             } else {
                 column.push(
                     mouse_area(
-                        button(row![icon, text(&entry.name)].spacing(8))
-                            .style(move |theme, status| {
-                                file_item_button_style(theme, status, is_selected)
-                            })
-                            .width(Length::Fill)
-                            .on_press(Message::EntryClicked {
-                                path: path.clone(),
-                                is_directory: false,
-                            }),
+                        button(
+                            row![icon, text(&entry.name)]
+                                .spacing(8)
+                                .align_y(iced::alignment::Vertical::Top),
+                        )
+                        .style(move |theme, status| {
+                            file_item_button_style(theme, status, is_selected)
+                        })
+                        .width(Length::Fill)
+                        .on_press(Message::EntryClicked {
+                            path: path.clone(),
+                            is_directory: false,
+                        }),
                     )
                     .on_right_press(Message::ShowEntryContext {
                         path,
@@ -2341,7 +2349,7 @@ impl Gui {
                                 .width(Length::Fill)
                                 .height(Length::Fill)
                                 .center_x(Length::Fill)
-                                .center_y(Length::Fill);
+                                .align_y(iced::alignment::Vertical::Top);
                                 let tile = button(tile_content)
                                     .style(move |theme, status| {
                                         file_item_button_style(theme, status, is_selected)
@@ -3119,10 +3127,13 @@ impl Gui {
                 } else {
                     location.label.clone()
                 };
-                let item =
-                    container(row![icon_text(sidebar_icon(&location)), text(label)].spacing(8))
-                        .padding(8)
-                        .width(Length::Fill);
+                let item = container(
+                    row![icon_text(sidebar_icon(&location)), text(label)]
+                        .spacing(8)
+                        .align_y(iced::alignment::Vertical::Top),
+                )
+                .padding(8)
+                .width(Length::Fill);
                 let item = if is_open {
                     item.style(|theme| {
                         iced::widget::container::Style::default()
