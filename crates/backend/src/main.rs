@@ -90,13 +90,7 @@ impl FileBrowser for FileBrowserService {
                 self.log(format!("Thumbnail generated for {}", path.display()));
                 thumbnail_path.display().to_string()
             }
-            Ok(ThumbnailOutcome::NotImage) => {
-                self.log(format!(
-                    "Thumbnail skipped for {}: not an image",
-                    path.display()
-                ));
-                String::new()
-            }
+            Ok(ThumbnailOutcome::NotImage) => String::new(),
             Err(error) => {
                 self.log(format!("Thumbnail failed for {}: {error}", path.display()));
                 String::new()
