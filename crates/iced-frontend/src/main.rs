@@ -1,7 +1,7 @@
 use std::{
     cell::Cell,
     collections::{HashMap, HashSet},
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     rc::Rc,
@@ -29,7 +29,15 @@ use proto::{BrowseResponse, browse_response::Payload};
 use serde::Deserialize;
 use tokio::runtime::Runtime;
 
-fn main() -> iced::Result {
+const DETACHED_ENV: &str = "IRON_FILE_DETACHED";
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let follow_logs = follow_logs_requested();
+    if !follow_logs && !is_detached() {
+        detach()?;
+        return Ok(());
+    }
+
     prefer_x11_when_available();
     if let Ok(runtime) = Runtime::new() {
         let _ = runtime.block_on(ensure_backend());
@@ -45,11 +53,33 @@ fn main() -> iced::Result {
             },
             ..Default::default()
         })
-        .run_with(|| {
-            let gui = Gui::new();
+        .run_with(move || {
+            let gui = Gui::new(follow_logs);
             let task = gui.load_initial_directory();
             (gui, task)
-        })
+        })?;
+    Ok(())
+}
+
+fn follow_logs_requested() -> bool {
+    env::args_os().skip(1).any(|argument| {
+        argument == std::ffi::OsStr::new("-f") || argument == std::ffi::OsStr::new("--follow")
+    })
+}
+
+fn is_detached() -> bool {
+    env::var_os(DETACHED_ENV).is_some()
+}
+
+fn detach() -> std::io::Result<()> {
+    Command::new(env::current_exe()?)
+        .args(env::args_os().skip(1))
+        .env(DETACHED_ENV, "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
 }
 
 #[cfg(target_os = "linux")]
@@ -66,6 +96,7 @@ fn prefer_x11_when_available() {
 fn prefer_x11_when_available() {}
 
 struct Gui {
+    follow_logs: bool,
     directory_path: PathBuf,
     address: String,
     entries: Vec<proto::FileEntry>,
@@ -397,7 +428,7 @@ impl Gui {
         })
     }
 
-    fn new() -> Self {
+    fn new(follow_logs: bool) -> Self {
         let directory_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let config_store = ConfigStore::from_environment();
         let mut profiles = config_store.profiles().unwrap_or_default();
@@ -423,6 +454,7 @@ impl Gui {
             .map(|profile| profile.theme.clone())
             .unwrap_or_else(iron_file_common::config::default_theme_settings);
         Self {
+            follow_logs,
             address: directory_path.display().to_string(),
             directory_path,
             entries: Vec::new(),
@@ -490,10 +522,10 @@ impl Gui {
                     load_mounts(),
                     Message::MountsLoaded,
                 )))
-                .chain(std::iter::once(Task::perform(
-                    pipe_backend_logs(),
-                    Message::BackendLogPipeEnded,
-                ))),
+                .chain(
+                    self.follow_logs
+                        .then(|| Task::perform(pipe_backend_logs(), Message::BackendLogPipeEnded)),
+                ),
         )
     }
 
