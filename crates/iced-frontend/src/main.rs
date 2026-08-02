@@ -593,6 +593,7 @@ enum PreferenceOption {
     Layout,
     NameAlignment,
     SmoothScrolling,
+    ScrollStep,
     ItemSize,
     MaxNameLines,
     Preview,
@@ -698,6 +699,7 @@ enum Message {
     BrowserLayoutSelected(BrowserLayout),
     NameAlignmentSelected(NameAlignment),
     SmoothScrollingToggled(bool),
+    ScrollStepChanged(u16),
     BrowserItemSizeChanged(u16),
     MaxNameLinesChanged(u8),
     PreviewToggled(bool),
@@ -1455,6 +1457,12 @@ impl Gui {
                 self.save_browser_settings(browser);
                 Task::none()
             }
+            Message::ScrollStepChanged(scroll_step) => {
+                let mut browser = self.active_browser_settings();
+                browser.scroll_step = scroll_step.clamp(10, 200);
+                self.save_browser_settings(browser);
+                Task::none()
+            }
             Message::BrowserItemSizeChanged(item_size) => {
                 let mut browser = self.active_browser_settings();
                 browser.item_size = item_size;
@@ -1889,6 +1897,7 @@ impl Gui {
             PreferenceOption::SmoothScrolling => {
                 browser.smooth_scrolling == browser_defaults.smooth_scrolling
             }
+            PreferenceOption::ScrollStep => browser.scroll_step == browser_defaults.scroll_step,
             PreferenceOption::ItemSize => browser.item_size == browser_defaults.item_size,
             PreferenceOption::MaxNameLines => {
                 browser.max_name_lines == browser_defaults.max_name_lines
@@ -2465,6 +2474,7 @@ impl Gui {
             PreferenceOption::Layout
             | PreferenceOption::NameAlignment
             | PreferenceOption::SmoothScrolling
+            | PreferenceOption::ScrollStep
             | PreferenceOption::ItemSize
             | PreferenceOption::MaxNameLines
             | PreferenceOption::Preview
@@ -2485,6 +2495,7 @@ impl Gui {
                     PreferenceOption::SmoothScrolling => {
                         browser.smooth_scrolling = defaults.smooth_scrolling
                     }
+                    PreferenceOption::ScrollStep => browser.scroll_step = defaults.scroll_step,
                     PreferenceOption::ItemSize => browser.item_size = defaults.item_size,
                     PreferenceOption::MaxNameLines => {
                         browser.max_name_lines = defaults.max_name_lines

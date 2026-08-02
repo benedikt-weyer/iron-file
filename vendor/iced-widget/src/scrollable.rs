@@ -81,6 +81,7 @@ pub struct Scrollable<
     content: Element<'a, Message, Theme, Renderer>,
     on_scroll: Option<Box<dyn Fn(Viewport) -> Message + 'a>>,
     smooth_scrolling: bool,
+    scroll_step: f32,
     class: Theme::Class<'a>,
 }
 
@@ -109,6 +110,7 @@ where
             content: content.into(),
             on_scroll: None,
             smooth_scrolling: false,
+            scroll_step: 60.0,
             class: Theme::default(),
         }
         .validate()
@@ -173,6 +175,12 @@ where
     /// Enables animated wheel scrolling.
     pub fn smooth_scrolling(mut self, enabled: bool) -> Self {
         self.smooth_scrolling = enabled;
+        self
+    }
+
+    /// Sets the distance, in pixels, moved by each line-wheel scroll event.
+    pub fn scroll_step(mut self, step: f32) -> Self {
+        self.scroll_step = step.max(1.0);
         self
     }
 
@@ -804,8 +812,7 @@ where
                             Vector::new(y, x)
                         };
 
-                        // TODO: Configurable speed/friction (?)
-                        -movement * 60.0
+                        -movement * self.scroll_step
                     }
                     mouse::ScrollDelta::Pixels { x, y } => -Vector::new(x, y),
                 };

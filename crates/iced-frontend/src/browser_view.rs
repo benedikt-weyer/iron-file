@@ -183,6 +183,7 @@ impl Gui {
                     .height(Length::Fill)
                     .direction(modern_vertical_scrollbar())
                     .smooth_scrolling(browser_settings.smooth_scrolling)
+                    .scroll_step(f32::from(browser_settings.scroll_step))
                     .style(modern_scrollable_style)
                     .into()
             })
@@ -363,6 +364,7 @@ impl Gui {
                     .width(Length::FillPortion(1))
                     .direction(modern_vertical_scrollbar())
                     .smooth_scrolling(browser_settings.smooth_scrolling)
+                    .scroll_step(f32::from(browser_settings.scroll_step))
                     .style(modern_scrollable_style)
                     .into()
             };
@@ -372,6 +374,7 @@ impl Gui {
                     .width(Length::FillPortion(2))
                     .direction(modern_vertical_scrollbar())
                     .smooth_scrolling(browser_settings.smooth_scrolling)
+                    .scroll_step(f32::from(browser_settings.scroll_step))
                     .style(modern_scrollable_style),
             ]
             .spacing(16)
@@ -386,6 +389,7 @@ impl Gui {
                 .height(Length::Fill)
                 .direction(modern_vertical_scrollbar())
                 .smooth_scrolling(browser_settings.smooth_scrolling)
+                .scroll_step(f32::from(browser_settings.scroll_step))
                 .style(modern_scrollable_style)
                 .into()
         };
@@ -1440,6 +1444,7 @@ impl Gui {
             scrollable(sidebar_content)
                 .direction(modern_vertical_scrollbar())
                 .smooth_scrolling(browser_settings.smooth_scrolling)
+                .scroll_step(f32::from(browser_settings.scroll_step))
                 .style(modern_scrollable_style),
         )
         .width(Length::Fixed(f32::from(self.sidebar_width())))

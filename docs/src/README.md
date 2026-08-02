@@ -49,3 +49,6 @@ empty string to disable an action.
 The `[browser]` `name_alignment` setting controls file and folder label
 alignment. Valid values are `"left"`, `"center"`, and `"right"`; the default is
 `"center"`.
+
+The `[browser]` `scroll_step` setting controls the pixel distance moved by one
+line-wheel scroll event. Its default is `60`.

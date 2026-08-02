@@ -15,6 +15,7 @@ item_size = 32
 layout = "list"
 name_alignment = "center"
 smooth_scrolling = true
+scroll_step = 60
 max_name_lines = 1
 preview_enabled = false
 show_hidden_files = false

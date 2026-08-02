@@ -94,6 +94,14 @@ impl Gui {
                 self.preference_reset_button(PreferenceOption::SmoothScrolling),
             ],
             row![
+                text("Scroll step"),
+                slider(10..=200, browser.scroll_step, Message::ScrollStepChanged)
+                    .width(Length::Fill),
+                text(format!("{} px", browser.scroll_step)),
+                self.preference_reset_button(PreferenceOption::ScrollStep),
+            ]
+            .spacing(10),
+            row![
                 text("Maximum name lines"),
                 slider(1..=5, browser.max_name_lines, Message::MaxNameLinesChanged)
                     .width(Length::Fill),
@@ -473,6 +481,7 @@ impl Gui {
                 .width(Length::Fill),
             )
             .direction(modern_vertical_scrollbar())
+            .scroll_step(f32::from(browser.scroll_step))
             .style(modern_scrollable_style),
         )
         .width(Length::Fill)

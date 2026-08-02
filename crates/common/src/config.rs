@@ -398,6 +398,8 @@ pub struct BrowserSettings {
     pub name_alignment: NameAlignment,
     #[serde(default = "default_smooth_scrolling")]
     pub smooth_scrolling: bool,
+    #[serde(default = "default_scroll_step")]
+    pub scroll_step: u16,
     #[serde(default = "default_max_name_lines")]
     pub max_name_lines: u8,
     #[serde(default = "default_preview_enabled")]
@@ -832,6 +834,10 @@ fn default_smooth_scrolling() -> bool {
     default_browser_settings().smooth_scrolling
 }
 
+fn default_scroll_step() -> u16 {
+    default_browser_settings().scroll_step
+}
+
 fn default_show_hidden_files() -> bool {
     default_browser_settings().show_hidden_files
 }
@@ -1077,6 +1083,23 @@ mod tests {
             profile.browser.unwrap().name_alignment,
             NameAlignment::Right
         );
+    }
+
+    #[test]
+    fn defaults_and_reads_scroll_step() {
+        assert_eq!(default_browser_settings().scroll_step, 60);
+
+        let profile: ProfileFile = toml::from_str(
+            r##"
+                [browser]
+                item_size = 32
+                layout = "list"
+                scroll_step = 96
+            "##,
+        )
+        .unwrap();
+
+        assert_eq!(profile.browser.unwrap().scroll_step, 96);
     }
 
     #[test]
