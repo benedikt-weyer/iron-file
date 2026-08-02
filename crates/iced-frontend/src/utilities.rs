@@ -10,6 +10,19 @@ pub(super) fn icon_text<'a>(name: &str) -> iced::widget::Text<'a> {
         .font(Font::with_name(icon.family))
 }
 
+pub(super) fn truncate_label(value: &str, max_characters: usize) -> String {
+    let character_count = value.chars().count();
+    if character_count <= max_characters {
+        return value.into();
+    }
+
+    let visible_characters = max_characters.saturating_sub(3);
+    format!(
+        "{}...",
+        value.chars().take(visible_characters).collect::<String>()
+    )
+}
+
 pub(super) fn sort_entries(entries: &mut [proto::FileEntry], order: EntrySortOrder) {
     entries.sort_by(|left, right| {
         let group = (!left.is_directory, left.name.starts_with('.'))

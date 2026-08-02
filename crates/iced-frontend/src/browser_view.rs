@@ -17,9 +17,16 @@ impl Gui {
                 column.push(
                     mouse_area(
                         button(
-                            row![icon, text(&entry.name)]
-                                .spacing(8)
-                                .align_y(iced::alignment::Vertical::Top),
+                            row![
+                                icon,
+                                tooltip(
+                                    text(truncate_label(&entry.name, 80)).width(Length::Fill),
+                                    text(&entry.name),
+                                    tooltip::Position::Bottom,
+                                )
+                            ]
+                            .spacing(8)
+                            .align_y(iced::alignment::Vertical::Top),
                         )
                         .style(move |theme, status| {
                             file_item_button_style(theme, status, is_selected)
@@ -40,9 +47,16 @@ impl Gui {
                 column.push(
                     mouse_area(
                         button(
-                            row![icon, text(&entry.name)]
-                                .spacing(8)
-                                .align_y(iced::alignment::Vertical::Top),
+                            row![
+                                icon,
+                                tooltip(
+                                    text(truncate_label(&entry.name, 80)).width(Length::Fill),
+                                    text(&entry.name),
+                                    tooltip::Position::Bottom,
+                                )
+                            ]
+                            .spacing(8)
+                            .align_y(iced::alignment::Vertical::Top),
                         )
                         .style(move |theme, status| {
                             file_item_button_style(theme, status, is_selected)
@@ -65,6 +79,7 @@ impl Gui {
             responsive(move |size| {
                 let tile_width = f32::from(browser_settings.item_size) * 3.5;
                 let tile_height = tile_width * 1.2;
+                let max_tile_name_characters = (tile_width / 8.0).floor().max(8.0) as usize;
                 let columns = (size.width / tile_width).floor().max(1.0) as usize;
                 tile_columns.set(columns);
                 let tiles =
@@ -81,9 +96,15 @@ impl Gui {
                                 let tile_content = container(
                                     column![
                                         icon,
-                                        text(&entry.name)
-                                            .width(Length::Fill)
-                                            .align_x(iced::alignment::Horizontal::Center),
+                                        tooltip(
+                                            text(truncate_label(
+                                                &entry.name,
+                                                max_tile_name_characters,
+                                            ))
+                                            .width(Length::Fill),
+                                            text(&entry.name),
+                                            tooltip::Position::Bottom,
+                                        )
                                     ]
                                     .spacing(6)
                                     .align_x(iced::alignment::Horizontal::Center),
@@ -1242,9 +1263,16 @@ impl Gui {
                     && self.sidebar_drop_target.as_ref() == Some(&location.path);
                 let label = location.label.clone();
                 let item = container(
-                    row![icon_text(sidebar_icon(&location)), text(label)]
-                        .spacing(8)
-                        .align_y(iced::alignment::Vertical::Top),
+                    row![
+                        icon_text(sidebar_icon(&location)),
+                        tooltip(
+                            text(truncate_label(&label, 24)).width(Length::Fill),
+                            text(label),
+                            tooltip::Position::Bottom,
+                        )
+                    ]
+                    .spacing(8)
+                    .align_y(iced::alignment::Vertical::Top),
                 )
                 .padding(8)
                 .width(Length::Fill);
