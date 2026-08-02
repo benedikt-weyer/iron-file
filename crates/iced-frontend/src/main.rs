@@ -482,7 +482,8 @@ enum PreferenceOption {
     BackgroundOpacity,
     ContextMenuBlurStrength,
     ContextMenuBlurKernelSize,
-    ContextMenuItems,
+    FileContextMenuItems,
+    FolderContextMenuItems,
     BorderRadius,
     Layout,
     ItemSize,
@@ -553,8 +554,16 @@ enum Message {
     BackgroundOpacityChanged(u8),
     ContextMenuBlurStrengthChanged(u8),
     ContextMenuBlurKernelSizeChanged(ContextMenuBlurKernelSize),
-    ContextMenuItemToggled(ContextMenuItem, bool),
-    MoveContextMenuItem(ContextMenuItem, bool),
+    ContextMenuItemToggled {
+        item: ContextMenuItem,
+        is_directory: bool,
+        enabled: bool,
+    },
+    MoveContextMenuItem {
+        item: ContextMenuItem,
+        is_directory: bool,
+        move_up: bool,
+    },
     BorderRadiusChanged(u8),
     OpenAccentPicker(bool),
     AccentHueChanged(u16),
@@ -1037,8 +1046,17 @@ impl Gui {
                 self.save_context_menu_blur_kernel_size(kernel_size);
                 Task::none()
             }
-            Message::ContextMenuItemToggled(item, enabled) => {
-                let mut items = self.active_browser_settings().context_menu_items;
+            Message::ContextMenuItemToggled {
+                item,
+                is_directory,
+                enabled,
+            } => {
+                let browser = self.active_browser_settings();
+                let mut items = if is_directory {
+                    browser.folder_context_menu_items
+                } else {
+                    browser.file_context_menu_items
+                };
                 if enabled {
                     if !items.contains(&item) {
                         items.push(item);
@@ -1046,11 +1064,20 @@ impl Gui {
                 } else {
                     items.retain(|configured_item| *configured_item != item);
                 }
-                self.save_context_menu_items(items);
+                self.save_context_menu_items(is_directory, items);
                 Task::none()
             }
-            Message::MoveContextMenuItem(item, move_up) => {
-                let mut items = self.active_browser_settings().context_menu_items;
+            Message::MoveContextMenuItem {
+                item,
+                is_directory,
+                move_up,
+            } => {
+                let browser = self.active_browser_settings();
+                let mut items = if is_directory {
+                    browser.folder_context_menu_items
+                } else {
+                    browser.file_context_menu_items
+                };
                 if let Some(index) = items
                     .iter()
                     .position(|configured_item| *configured_item == item)
@@ -1062,7 +1089,7 @@ impl Gui {
                     };
                     if let Some(target) = target {
                         items.swap(index, target);
-                        self.save_context_menu_items(items);
+                        self.save_context_menu_items(is_directory, items);
                     }
                 }
                 Task::none()
@@ -1532,8 +1559,11 @@ impl Gui {
             PreferenceOption::Terminal => {
                 browser.terminal_command == browser_defaults.terminal_command
             }
-            PreferenceOption::ContextMenuItems => {
-                browser.context_menu_items == browser_defaults.context_menu_items
+            PreferenceOption::FileContextMenuItems => {
+                browser.file_context_menu_items == browser_defaults.file_context_menu_items
+            }
+            PreferenceOption::FolderContextMenuItems => {
+                browser.folder_context_menu_items == browser_defaults.folder_context_menu_items
             }
         }
     }
@@ -2010,7 +2040,8 @@ impl Gui {
             | PreferenceOption::IconTheme
             | PreferenceOption::ThumbnailLocation
             | PreferenceOption::Terminal
-            | PreferenceOption::ContextMenuItems => {
+            | PreferenceOption::FileContextMenuItems
+            | PreferenceOption::FolderContextMenuItems => {
                 let mut browser = self.active_browser_settings();
                 match option {
                     PreferenceOption::Layout => browser.layout = defaults.layout,
@@ -2026,8 +2057,11 @@ impl Gui {
                     PreferenceOption::Terminal => {
                         browser.terminal_command = defaults.terminal_command
                     }
-                    PreferenceOption::ContextMenuItems => {
-                        browser.context_menu_items = defaults.context_menu_items
+                    PreferenceOption::FileContextMenuItems => {
+                        browser.file_context_menu_items = defaults.file_context_menu_items
+                    }
+                    PreferenceOption::FolderContextMenuItems => {
+                        browser.folder_context_menu_items = defaults.folder_context_menu_items
                     }
                     _ => unreachable!(),
                 }
@@ -2134,7 +2168,7 @@ impl Gui {
         }
     }
 
-    fn save_context_menu_items(&mut self, items: Vec<ContextMenuItem>) {
+    fn save_context_menu_items(&mut self, is_directory: bool, items: Vec<ContextMenuItem>) {
         let Some(path) = self.active_profile.clone() else {
             self.status = "No active configuration profile".into();
             return;
@@ -2144,7 +2178,11 @@ impl Gui {
             return;
         };
         let mut browser = profile.browser.clone();
-        browser.context_menu_items = items;
+        if is_directory {
+            browser.folder_context_menu_items = items;
+        } else {
+            browser.file_context_menu_items = items;
+        }
         self.save_browser_settings(browser);
     }
 
@@ -2799,7 +2837,12 @@ impl Gui {
             let mut actions = column![].spacing(4);
             let mut action_count = 0_u16;
             let mut rendered_items = HashSet::new();
-            for item in &browser_settings.context_menu_items {
+            let context_menu_items = if entry.is_directory {
+                &browser_settings.folder_context_menu_items
+            } else {
+                &browser_settings.file_context_menu_items
+            };
+            for item in context_menu_items {
                 if !rendered_items.insert(*item) {
                     continue;
                 }
@@ -3602,52 +3645,76 @@ impl Gui {
             button(text("Restart backend")).on_press(Message::RestartBackend),
         ]
         .spacing(10);
-        let mut configured_context_menu_items = Vec::new();
-        for item in &browser.context_menu_items {
-            if !configured_context_menu_items.contains(item) {
-                configured_context_menu_items.push(*item);
+        let context_menu_options = |active_items: &[ContextMenuItem],
+                                    available_items: &[ContextMenuItem],
+                                    is_directory: bool| {
+            let mut configured_items = Vec::new();
+            for item in active_items {
+                if available_items.contains(item) && !configured_items.contains(item) {
+                    configured_items.push(*item);
+                }
             }
-        }
-        let configured_context_menu_item_count = configured_context_menu_items.len();
-        let mut context_menu_items = configured_context_menu_items.clone();
-        for item in ContextMenuItem::ALL {
-            if !context_menu_items.contains(&item) {
-                context_menu_items.push(item);
+            let configured_item_count = configured_items.len();
+            let mut items = configured_items.clone();
+            for item in available_items {
+                if !items.contains(item) {
+                    items.push(*item);
+                }
             }
-        }
-        let context_menu_options = context_menu_items.into_iter().enumerate().fold(
-            column![].spacing(6),
-            |column, (index, item)| {
-                let enabled = index < configured_context_menu_item_count;
-                let move_up = enabled
-                    .then_some(index > 0)
-                    .filter(|can_move| *can_move)
-                    .map(|_| Message::MoveContextMenuItem(item, true));
-                let move_down = enabled
-                    .then_some(index + 1 < configured_context_menu_item_count)
-                    .filter(|can_move| *can_move)
-                    .map(|_| Message::MoveContextMenuItem(item, false));
-                column.push(
-                    row![
-                        checkbox(item.to_string(), enabled)
-                            .on_toggle(move |enabled| Message::ContextMenuItemToggled(
-                                item, enabled
-                            ))
-                            .width(Length::Fill),
-                        tooltip(
-                            button(icon_text("chevron-up")).on_press_maybe(move_up),
-                            text("Move up"),
-                            tooltip::Position::Bottom,
-                        ),
-                        tooltip(
-                            button(icon_text("chevron-down")).on_press_maybe(move_down),
-                            text("Move down"),
-                            tooltip::Position::Bottom,
-                        ),
-                    ]
-                    .spacing(6),
-                )
-            },
+            items
+                .into_iter()
+                .enumerate()
+                .fold(column![].spacing(6), |column, (index, item)| {
+                    let enabled = index < configured_item_count;
+                    let move_up = enabled
+                        .then_some(index > 0)
+                        .filter(|can_move| *can_move)
+                        .map(|_| Message::MoveContextMenuItem {
+                            item,
+                            is_directory,
+                            move_up: true,
+                        });
+                    let move_down = enabled
+                        .then_some(index + 1 < configured_item_count)
+                        .filter(|can_move| *can_move)
+                        .map(|_| Message::MoveContextMenuItem {
+                            item,
+                            is_directory,
+                            move_up: false,
+                        });
+                    column.push(
+                        row![
+                            checkbox(item.to_string(), enabled)
+                                .on_toggle(move |enabled| Message::ContextMenuItemToggled {
+                                    item,
+                                    is_directory,
+                                    enabled,
+                                })
+                                .width(Length::Fill),
+                            tooltip(
+                                button(icon_text("chevron-up")).on_press_maybe(move_up),
+                                text("Move up"),
+                                tooltip::Position::Bottom,
+                            ),
+                            tooltip(
+                                button(icon_text("chevron-down")).on_press_maybe(move_down),
+                                text("Move down"),
+                                tooltip::Position::Bottom,
+                            ),
+                        ]
+                        .spacing(6),
+                    )
+                })
+        };
+        let file_context_menu_options = context_menu_options(
+            &browser.file_context_menu_items,
+            &ContextMenuItem::FILE_OPTIONS,
+            false,
+        );
+        let folder_context_menu_options = context_menu_options(
+            &browser.folder_context_menu_items,
+            &ContextMenuItem::FOLDER_OPTIONS,
+            true,
         );
         let profiles = self
             .profiles
@@ -3776,11 +3843,20 @@ impl Gui {
                 column![text("Browser").size(18), browser_options].spacing(10),
                 column![
                     row![
-                        text("Context menu").size(18),
-                        self.preference_reset_button(PreferenceOption::ContextMenuItems),
+                        text("File context menu").size(18),
+                        self.preference_reset_button(PreferenceOption::FileContextMenuItems),
                     ]
                     .spacing(8),
-                    context_menu_options,
+                    file_context_menu_options,
+                ]
+                .spacing(10),
+                column![
+                    row![
+                        text("Folder context menu").size(18),
+                        self.preference_reset_button(PreferenceOption::FolderContextMenuItems),
+                    ]
+                    .spacing(8),
+                    folder_context_menu_options,
                 ]
                 .spacing(10),
                 column![text("Configuration search paths").size(18), search_paths].spacing(10),

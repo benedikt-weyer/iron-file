@@ -23,10 +23,12 @@ vendors and enables that patch through its Cargo workspace override.
 
 ## Context menu
 
-The `[browser]` `context_menu_items` array controls both the visible actions and
-their order. Omit an item to hide it. The default puts `"create-folder"` and
-`"create-file"` first. Available values are `"create-folder"`, `"create-file"`,
-`"open"`, `"copy-location"`, `"copy-selection"`, `"delete-selection"`,
-`"paste"`, `"toggle-sidebar-location"`, `"create-symlink"`,
+The `[browser]` `file_context_menu_items` and `folder_context_menu_items`
+arrays independently control visible actions and their order. Omit an item to
+hide it. Folder defaults put `"create-folder"` and `"create-file"` first.
+Available values are `"create-folder"`, `"create-file"`, `"open"`,
+`"copy-location"`, `"copy-selection"`, `"delete-selection"`, `"paste"`,
+`"toggle-sidebar-location"`, `"create-symlink"`,
 `"add-symlink-to-paste-buffer"`, and `"open-terminal"`. Actions that do not
-apply to the selected file or folder are hidden automatically.
+apply to the selected file or folder are hidden automatically. The legacy
+`context_menu_items` setting is read as the initial list for both menus.

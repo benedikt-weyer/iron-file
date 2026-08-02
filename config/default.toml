@@ -20,10 +20,15 @@ terminal_command = "default"
 sidebar_width = 180
 icon_theme = "bundled"
 thumbnail_location = "~/.cache/iron-file/thumbnails"
-context_menu_items = [
+file_context_menu_items = [
+  "open",
+  "copy-location",
+  "copy-selection",
+  "delete-selection",
+]
+folder_context_menu_items = [
   "create-folder",
   "create-file",
-  "open",
   "copy-location",
   "copy-selection",
   "delete-selection",

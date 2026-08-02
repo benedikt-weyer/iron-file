@@ -235,6 +235,26 @@ impl ContextMenuItem {
         Self::AddSymlinkToPasteBuffer,
         Self::OpenTerminal,
     ];
+
+    pub const FILE_OPTIONS: [Self; 4] = [
+        Self::Open,
+        Self::CopyLocation,
+        Self::CopySelection,
+        Self::DeleteSelection,
+    ];
+
+    pub const FOLDER_OPTIONS: [Self; 10] = [
+        Self::CreateFolder,
+        Self::CreateFile,
+        Self::CopyLocation,
+        Self::CopySelection,
+        Self::DeleteSelection,
+        Self::Paste,
+        Self::ToggleSidebarLocation,
+        Self::CreateSymlink,
+        Self::AddSymlinkToPasteBuffer,
+        Self::OpenTerminal,
+    ];
 }
 
 impl fmt::Display for ContextMenuItem {
@@ -273,8 +293,12 @@ pub struct BrowserSettings {
     pub icon_theme: String,
     #[serde(default = "default_thumbnail_location")]
     pub thumbnail_location: PathBuf,
-    #[serde(default = "default_context_menu_items")]
-    pub context_menu_items: Vec<ContextMenuItem>,
+    #[serde(default = "default_file_context_menu_items")]
+    pub file_context_menu_items: Vec<ContextMenuItem>,
+    #[serde(default = "default_folder_context_menu_items")]
+    pub folder_context_menu_items: Vec<ContextMenuItem>,
+    #[serde(default, rename = "context_menu_items", skip_serializing)]
+    legacy_context_menu_items: Option<Vec<ContextMenuItem>>,
 }
 
 #[derive(Debug, Clone)]
@@ -548,6 +572,7 @@ impl ConfigStore {
         }
         if let Some(browser) = file.browser.as_mut() {
             browser.thumbnail_location = expand_home_path(&browser.thumbnail_location);
+            browser.apply_legacy_context_menu_items();
         }
         let inherited = file
             .base_profile
@@ -686,20 +711,22 @@ fn default_thumbnail_location() -> PathBuf {
     default_browser_settings().thumbnail_location
 }
 
-fn default_context_menu_items() -> Vec<ContextMenuItem> {
-    vec![
-        ContextMenuItem::CreateFolder,
-        ContextMenuItem::CreateFile,
-        ContextMenuItem::Open,
-        ContextMenuItem::CopyLocation,
-        ContextMenuItem::CopySelection,
-        ContextMenuItem::DeleteSelection,
-        ContextMenuItem::Paste,
-        ContextMenuItem::ToggleSidebarLocation,
-        ContextMenuItem::CreateSymlink,
-        ContextMenuItem::AddSymlinkToPasteBuffer,
-        ContextMenuItem::OpenTerminal,
-    ]
+fn default_file_context_menu_items() -> Vec<ContextMenuItem> {
+    ContextMenuItem::FILE_OPTIONS.to_vec()
+}
+
+fn default_folder_context_menu_items() -> Vec<ContextMenuItem> {
+    ContextMenuItem::FOLDER_OPTIONS.to_vec()
+}
+
+impl BrowserSettings {
+    fn apply_legacy_context_menu_items(&mut self) {
+        let Some(items) = self.legacy_context_menu_items.take() else {
+            return;
+        };
+        self.file_context_menu_items = items.clone();
+        self.folder_context_menu_items = items;
+    }
 }
 
 fn default_profile_file() -> ProfileFile {
@@ -834,7 +861,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_context_menu_items_in_configured_order() {
+    fn reads_legacy_context_menu_items_for_both_menus() {
         let profile: ProfileFile = toml::from_str(
             r##"
                 [browser]
@@ -845,10 +872,11 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            profile.browser.unwrap().context_menu_items,
-            vec![ContextMenuItem::CopyLocation, ContextMenuItem::CreateFile,]
-        );
+        let mut browser = profile.browser.unwrap();
+        browser.apply_legacy_context_menu_items();
+        let expected = vec![ContextMenuItem::CopyLocation, ContextMenuItem::CreateFile];
+        assert_eq!(browser.file_context_menu_items, expected);
+        assert_eq!(browser.folder_context_menu_items, expected);
     }
 
     #[test]
