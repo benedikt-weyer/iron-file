@@ -2460,6 +2460,10 @@ impl Gui {
         .style(|_| {
             iced::widget::container::Style::default()
                 .background(Color::from_rgba8(128, 128, 128, 0.12))
+                .border(Border {
+                    radius: border_radius().into(),
+                    ..Border::default()
+                })
         });
         let save_name_input = self.save_file_name.as_ref().map(|name| {
             let reset = self
