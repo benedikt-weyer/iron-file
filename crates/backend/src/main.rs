@@ -385,18 +385,35 @@ fn directory_entries(path: &Path) -> Result<Vec<FileEntry>, String> {
             let is_symlink = std::fs::symlink_metadata(&path)
                 .map(|metadata| metadata.file_type().is_symlink())
                 .unwrap_or(false);
+            let metadata = std::fs::metadata(&path).ok();
             FileEntry {
                 name: entry.file_name().to_string_lossy().into_owned(),
                 is_directory: path.is_dir(),
                 path: path.display().to_string(),
                 thumbnail_path: String::new(),
                 is_symlink,
+                modified_at: metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.modified().ok())
+                    .and_then(timestamp_seconds)
+                    .unwrap_or_default(),
+                created_at: metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.created().ok())
+                    .and_then(timestamp_seconds)
+                    .unwrap_or_default(),
             }
         })
         .collect::<Vec<_>>();
     sort_file_entries(&mut files);
 
     Ok(files)
+}
+
+fn timestamp_seconds(time: std::time::SystemTime) -> Option<i64> {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
 }
 
 fn sort_file_entries(entries: &mut [FileEntry]) {
@@ -810,6 +827,8 @@ mod tests {
                 path: String::new(),
                 thumbnail_path: String::new(),
                 is_symlink: false,
+                modified_at: 0,
+                created_at: 0,
             },
             FileEntry {
                 name: "visible-file".into(),
@@ -817,6 +836,8 @@ mod tests {
                 path: String::new(),
                 thumbnail_path: String::new(),
                 is_symlink: false,
+                modified_at: 0,
+                created_at: 0,
             },
             FileEntry {
                 name: ".hidden-folder".into(),
@@ -824,6 +845,8 @@ mod tests {
                 path: String::new(),
                 thumbnail_path: String::new(),
                 is_symlink: false,
+                modified_at: 0,
+                created_at: 0,
             },
             FileEntry {
                 name: "visible-folder".into(),
@@ -831,6 +854,8 @@ mod tests {
                 path: String::new(),
                 thumbnail_path: String::new(),
                 is_symlink: false,
+                modified_at: 0,
+                created_at: 0,
             },
         ];
 

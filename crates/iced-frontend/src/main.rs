@@ -466,16 +466,32 @@ enum FolderSortSelection {
     None,
     NameAscending,
     NameDescending,
+    ModifiedNewest,
+    ModifiedOldest,
+    CreatedNewest,
+    CreatedOldest,
 }
 
 impl FolderSortSelection {
-    const ALL: [Self; 3] = [Self::None, Self::NameAscending, Self::NameDescending];
+    const ALL: [Self; 7] = [
+        Self::None,
+        Self::NameAscending,
+        Self::NameDescending,
+        Self::ModifiedNewest,
+        Self::ModifiedOldest,
+        Self::CreatedNewest,
+        Self::CreatedOldest,
+    ];
 
     fn sort_order(self) -> Option<EntrySortOrder> {
         match self {
             Self::None => None,
             Self::NameAscending => Some(EntrySortOrder::NameAscending),
             Self::NameDescending => Some(EntrySortOrder::NameDescending),
+            Self::ModifiedNewest => Some(EntrySortOrder::ModifiedNewest),
+            Self::ModifiedOldest => Some(EntrySortOrder::ModifiedOldest),
+            Self::CreatedNewest => Some(EntrySortOrder::CreatedNewest),
+            Self::CreatedOldest => Some(EntrySortOrder::CreatedOldest),
         }
     }
 }
@@ -486,6 +502,10 @@ impl From<Option<EntrySortOrder>> for FolderSortSelection {
             None => Self::None,
             Some(EntrySortOrder::NameAscending) => Self::NameAscending,
             Some(EntrySortOrder::NameDescending) => Self::NameDescending,
+            Some(EntrySortOrder::ModifiedNewest) => Self::ModifiedNewest,
+            Some(EntrySortOrder::ModifiedOldest) => Self::ModifiedOldest,
+            Some(EntrySortOrder::CreatedNewest) => Self::CreatedNewest,
+            Some(EntrySortOrder::CreatedOldest) => Self::CreatedOldest,
         }
     }
 }
@@ -496,6 +516,10 @@ impl std::fmt::Display for FolderSortSelection {
             Self::None => "Folder: None",
             Self::NameAscending => "Folder: Name (A-Z)",
             Self::NameDescending => "Folder: Name (Z-A)",
+            Self::ModifiedNewest => "Folder: Last modified (newest)",
+            Self::ModifiedOldest => "Folder: Last modified (oldest)",
+            Self::CreatedNewest => "Folder: Created (newest)",
+            Self::CreatedOldest => "Folder: Created (oldest)",
         })
     }
 }
@@ -4623,6 +4647,10 @@ fn sort_entries(entries: &mut [proto::FileEntry], order: EntrySortOrder) {
         match order {
             EntrySortOrder::NameAscending => names,
             EntrySortOrder::NameDescending => names.reverse(),
+            EntrySortOrder::ModifiedNewest => right.modified_at.cmp(&left.modified_at).then(names),
+            EntrySortOrder::ModifiedOldest => left.modified_at.cmp(&right.modified_at).then(names),
+            EntrySortOrder::CreatedNewest => right.created_at.cmp(&left.created_at).then(names),
+            EntrySortOrder::CreatedOldest => left.created_at.cmp(&right.created_at).then(names),
         }
     });
 }

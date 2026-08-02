@@ -33,6 +33,8 @@ message FileEntry {
   bool is_directory = 3;
   string thumbnail_path = 4;
   bool is_symlink = 5;
+  int64 modified_at = 6;
+  int64 created_at = 7;
 }
 
 message ThumbnailRequest {

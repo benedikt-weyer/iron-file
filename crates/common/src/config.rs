@@ -305,6 +305,10 @@ impl QuickToolbarItem {
 pub enum EntrySortOrder {
     NameAscending,
     NameDescending,
+    ModifiedNewest,
+    ModifiedOldest,
+    CreatedNewest,
+    CreatedOldest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -314,7 +318,14 @@ pub struct FolderSortOverride {
 }
 
 impl EntrySortOrder {
-    pub const ALL: [Self; 2] = [Self::NameAscending, Self::NameDescending];
+    pub const ALL: [Self; 6] = [
+        Self::NameAscending,
+        Self::NameDescending,
+        Self::ModifiedNewest,
+        Self::ModifiedOldest,
+        Self::CreatedNewest,
+        Self::CreatedOldest,
+    ];
 }
 
 impl fmt::Display for EntrySortOrder {
@@ -322,6 +333,10 @@ impl fmt::Display for EntrySortOrder {
         formatter.write_str(match self {
             Self::NameAscending => "Name (A-Z)",
             Self::NameDescending => "Name (Z-A)",
+            Self::ModifiedNewest => "Last modified (newest)",
+            Self::ModifiedOldest => "Last modified (oldest)",
+            Self::CreatedNewest => "Created (newest)",
+            Self::CreatedOldest => "Created (oldest)",
         })
     }
 }
