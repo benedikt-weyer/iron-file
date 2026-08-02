@@ -80,7 +80,6 @@ impl FileBrowser for FileBrowserService {
     ) -> Result<Response<ThumbnailResponse>, Status> {
         let request = request.into_inner();
         let path = PathBuf::from(request.path);
-        self.log(format!("Thumbnail requested for {}", path.display()));
         let thumbnail_path = match thumbnail_for(&path, Path::new(&request.thumbnail_directory)) {
             Ok(ThumbnailOutcome::Cached(thumbnail_path)) => {
                 self.log(format!("Thumbnail cache hit for {}", path.display()));
