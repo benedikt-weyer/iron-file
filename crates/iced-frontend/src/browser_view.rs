@@ -1226,11 +1226,14 @@ impl Gui {
             stack![
                 mouse_area(Space::new(Length::Fill, Length::Fill))
                     .on_press(Message::CloseEntryInfo),
-                container(modal)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill),
+                mouse_area(
+                    container(modal)
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                )
+                .on_move(Message::ContextPointerMoved),
             ]
             .width(Length::Fill)
             .height(Length::Fill)
@@ -1317,7 +1320,8 @@ impl Gui {
                     ]
                     .align_y(iced::alignment::Vertical::Center),
                     text(self.directory_path.display().to_string()),
-                    timeline,
+                    container(scrollable(timeline).direction(modern_vertical_scrollbar()))
+                        .max_height(520.0),
                 ]
                 .spacing(12),
             )
@@ -1332,10 +1336,33 @@ impl Gui {
                         radius: border_radius().into(),
                     })
             });
+            let theme_settings = self.active_theme_settings();
+            let blur_strength = if theme_settings.background_opacity < 100 {
+                theme_settings.context_menu_blur_strength.min(5)
+            } else {
+                0
+            };
+            let blur: Element<'_, Message> = if blur_strength > 0 {
+                iced::widget::shader::Shader::new(backdrop_blur::BackdropBlur::new(
+                    blur_strength,
+                    theme_settings
+                        .context_menu_blur_kernel_size
+                        .effective_size(blur_strength),
+                ))
+                .width(Length::Fixed(520.0))
+                .height(Length::Fixed(640.0))
+                .into()
+            } else {
+                Space::new(Length::Fixed(520.0), Length::Fixed(360.0)).into()
+            };
+            let modal = container(stack![blur, dialog])
+                .width(Length::Fixed(520.0))
+                .max_height(640.0);
             stack![
                 mouse_area(Space::new(Length::Fill, Length::Fill))
-                    .on_press(Message::TogglePerformanceDebugger),
-                container(dialog)
+                    .on_press(Message::TogglePerformanceDebugger)
+                    .on_move(Message::ContextPointerMoved),
+                container(modal)
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .center_x(Length::Fill)
