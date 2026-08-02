@@ -244,6 +244,13 @@ impl Gui {
                     tooltip::Position::Bottom,
                 )
                 .into(),
+                QuickToolbarItem::PerformanceDebugger => tooltip(
+                    button(icon_text("chart-no-axes-combined"))
+                        .on_press(Message::TogglePerformanceDebugger),
+                    text("Performance debugger"),
+                    tooltip::Position::Bottom,
+                )
+                .into(),
                 QuickToolbarItem::ToggleHiddenFiles => tooltip(
                     button(icon_text(if browser_settings.show_hidden_files {
                         "eye-off"
@@ -1228,6 +1235,114 @@ impl Gui {
             .width(Length::Fill)
             .height(Length::Fill)
         });
+        let performance_debugger = self.show_performance_debugger.then(|| {
+            let timeline: Element<'_, Message> = if let Some(load) = &self.folder_load_performance {
+                let displayed_ms = load
+                    .displayed_at
+                    .map(|at| at.duration_since(load.started_at).as_millis() as u64)
+                    .unwrap_or_default();
+                let thumbnails_ms = load
+                    .thumbnails_settled_at
+                    .map(|at| at.duration_since(load.started_at).as_millis() as u64)
+                    .unwrap_or_default();
+                let first_item_ms = load
+                    .first_item_at
+                    .map(|at| at.duration_since(load.started_at).as_millis() as u64)
+                    .unwrap_or_default();
+                let response_ms = self
+                    .last_folder_load_duration
+                    .map(|duration| duration.as_millis() as u64)
+                    .unwrap_or_default();
+                let total_ms = displayed_ms
+                    .max(thumbnails_ms)
+                    .max(first_item_ms)
+                    .max(response_ms)
+                    .max(1);
+                let enumeration_width = (420.0 * load.enumeration_ms.unwrap_or_default() as f32
+                    / total_ms as f32)
+                    .max(3.0);
+                let display_width = (420.0 * displayed_ms as f32 / total_ms as f32).max(3.0);
+                let thumbnail_width = (420.0 * thumbnails_ms as f32 / total_ms as f32).max(3.0);
+                let response_width = (420.0 * response_ms as f32 / total_ms as f32).max(3.0);
+                let first_item_width = (420.0 * first_item_ms as f32 / total_ms as f32).max(3.0);
+                column![
+                    text(format!("{} entries", load.expected_entries)),
+                    text(format!("Folder load total: {total_ms} ms")).size(14),
+                    text(format!("Browse response received: {response_ms} ms")).size(14),
+                    container(Space::with_height(Length::Fixed(14.0)))
+                        .width(Length::Fixed(response_width))
+                        .style(|theme: &Theme| iced::widget::container::Style::default()
+                            .background(theme.palette().primary)),
+                    text(format!(
+                        "Backend enumeration: {} ms",
+                        load.enumeration_ms.unwrap_or_default()
+                    ))
+                    .size(14),
+                    container(Space::with_height(Length::Fixed(20.0)))
+                        .width(Length::Fixed(enumeration_width))
+                        .style(|theme: &Theme| iced::widget::container::Style::default()
+                            .background(theme.palette().danger)),
+                    text(format!("First item rendered: {first_item_ms} ms")).size(14),
+                    container(Space::with_height(Length::Fixed(14.0)))
+                        .width(Length::Fixed(first_item_width))
+                        .style(|theme: &Theme| iced::widget::container::Style::default()
+                            .background(theme.palette().primary)),
+                    text(format!("All items displayed: {displayed_ms} ms")).size(14),
+                    container(Space::with_height(Length::Fixed(20.0)))
+                        .width(Length::Fixed(display_width))
+                        .style(|theme: &Theme| iced::widget::container::Style::default()
+                            .background(theme.palette().primary)),
+                    text(format!(
+                        "All thumbnails loaded: {thumbnails_ms} ms ({}/{})",
+                        load.thumbnails_settled, load.thumbnails_total
+                    ))
+                    .size(14),
+                    container(Space::with_height(Length::Fixed(20.0)))
+                        .width(Length::Fixed(thumbnail_width))
+                        .style(|theme: &Theme| iced::widget::container::Style::default()
+                            .background(theme.palette().success)),
+                ]
+                .spacing(6)
+                .into()
+            } else {
+                text("Loading performance data...").into()
+            };
+            let dialog = container(
+                column![
+                    row![
+                        text("Last Folder Load").size(20),
+                        Space::with_width(Length::Fill),
+                        button(icon_text("x")).on_press(Message::TogglePerformanceDebugger),
+                    ]
+                    .align_y(iced::alignment::Vertical::Center),
+                    text(self.directory_path.display().to_string()),
+                    timeline,
+                ]
+                .spacing(12),
+            )
+            .width(Length::Fixed(520.0))
+            .padding(16)
+            .style(|theme: &Theme| {
+                iced::widget::container::Style::default()
+                    .background(theme.palette().background)
+                    .border(Border {
+                        color: theme.palette().primary,
+                        width: 1.0,
+                        radius: border_radius().into(),
+                    })
+            });
+            stack![
+                mouse_area(Space::new(Length::Fill, Length::Fill))
+                    .on_press(Message::TogglePerformanceDebugger),
+                container(dialog)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+        });
 
         stack![page]
             .push_maybe(overlay)
@@ -1236,6 +1351,7 @@ impl Gui {
             .push_maybe(rename_dialog)
             .push_maybe(compression_dialog)
             .push_maybe(info_dialog)
+            .push_maybe(performance_debugger)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()

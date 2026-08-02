@@ -362,6 +362,10 @@ struct Gui {
     dark_accent_input: String,
     accent_picker: Option<AccentPickerState>,
     context_entry: Option<ContextEntry>,
+    show_performance_debugger: bool,
+    folder_load_started: Option<Instant>,
+    last_folder_load_duration: Option<Duration>,
+    folder_load_performance: Option<FolderLoadPerformance>,
     pending_info: Option<InfoDialog>,
     pointer_position: Point,
     context_position: Point,
@@ -437,6 +441,18 @@ struct ContextEntry {
     is_directory: bool,
     is_sidebar_location: bool,
     opener: Option<Result<String, String>>,
+}
+
+#[derive(Debug, Clone)]
+struct FolderLoadPerformance {
+    started_at: Instant,
+    enumeration_ms: Option<u64>,
+    expected_entries: usize,
+    first_item_at: Option<Instant>,
+    displayed_at: Option<Instant>,
+    thumbnails_total: usize,
+    thumbnails_settled: usize,
+    thumbnails_settled_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -740,6 +756,7 @@ enum Message {
     },
     ContextPointerMoved(Point),
     CloseFolderContext,
+    TogglePerformanceDebugger,
     RequestEntryInfo(PathBuf),
     EntryInfoLoaded {
         path: PathBuf,
@@ -915,6 +932,10 @@ impl Gui {
             dark_accent_input: theme.dark_highlight,
             accent_picker: None,
             context_entry: None,
+            show_performance_debugger: false,
+            folder_load_started: None,
+            last_folder_load_duration: None,
+            folder_load_performance: None,
             pending_info: None,
             pointer_position: Point::ORIGIN,
             context_position: Point::ORIGIN,
@@ -1646,6 +1667,10 @@ impl Gui {
                 self.context_entry = None;
                 Task::none()
             }
+            Message::TogglePerformanceDebugger => {
+                self.show_performance_debugger = !self.show_performance_debugger;
+                Task::none()
+            }
             Message::RequestEntryInfo(path) => {
                 self.context_entry = None;
                 self.pending_info = Some(InfoDialog::Loading(path.clone()));
@@ -1785,6 +1810,14 @@ impl Gui {
                 path,
                 thumbnail_path: Ok(thumbnail_path),
             } => {
+                if let Some(performance) = &mut self.folder_load_performance {
+                    performance.thumbnails_settled += 1;
+                    if performance.displayed_at.is_some()
+                        && performance.thumbnails_settled == performance.thumbnails_total
+                    {
+                        performance.thumbnails_settled_at = Some(Instant::now());
+                    }
+                }
                 if !thumbnail_path.is_empty()
                     && let Some(entry) = self
                         .entries
@@ -1808,6 +1841,9 @@ impl Gui {
                 thumbnail_path: Err(error),
                 ..
             } => {
+                if let Some(performance) = &mut self.folder_load_performance {
+                    performance.thumbnails_settled += 1;
+                }
                 eprintln!("[iron-file thumbnails] {error}");
                 Task::none()
             }
@@ -1818,7 +1854,23 @@ impl Gui {
                 if self.directory_path != directory {
                     return Task::none();
                 }
+                if entry.directory_complete {
+                    if let Some(performance) = &mut self.folder_load_performance {
+                        performance.enumeration_ms = Some(entry.directory_enumeration_ms);
+                        performance.expected_entries = entry.directory_entry_count as usize;
+                        performance.displayed_at = Some(Instant::now());
+                        if performance.thumbnails_total == performance.thumbnails_settled {
+                            performance.thumbnails_settled_at = Some(Instant::now());
+                        }
+                    }
+                    return Task::none();
+                }
                 let path = PathBuf::from(&entry.path);
+                if let Some(performance) = &mut self.folder_load_performance
+                    && performance.first_item_at.is_none()
+                {
+                    performance.first_item_at = Some(Instant::now());
+                }
                 let icon_theme = self.active_browser_settings().icon_theme;
                 self.entry_icons
                     .insert(path.clone(), themed_entry_icon_path(&icon_theme, &entry));
@@ -1831,6 +1883,9 @@ impl Gui {
                 if is_directory || thumbnail_is_loaded {
                     Task::none()
                 } else {
+                    if let Some(performance) = &mut self.folder_load_performance {
+                        performance.thumbnails_total += 1;
+                    }
                     let thumbnail_directory = self.active_browser_settings().thumbnail_location;
                     Task::perform(
                         create_thumbnail(path.clone(), thumbnail_directory),
@@ -2930,6 +2985,7 @@ impl Gui {
     fn request_path(&mut self, path: PathBuf, history: HistoryRequest) -> Task<Message> {
         self.editing_address = false;
         self.status = format!("Loading {}", path.display());
+        self.folder_load_started = Some(Instant::now());
         let thumbnail_directory = self.active_browser_settings().thumbnail_location;
         Task::perform(
             browse_with_thumbnails(path, Some(thumbnail_directory)),
@@ -2956,6 +3012,20 @@ impl Gui {
 
         match response.payload {
             Some(Payload::Directory(directory)) => {
+                self.last_folder_load_duration = self
+                    .folder_load_started
+                    .take()
+                    .map(|started| started.elapsed());
+                self.folder_load_performance = Some(FolderLoadPerformance {
+                    started_at: Instant::now(),
+                    enumeration_ms: None,
+                    expected_entries: 0,
+                    first_item_at: None,
+                    displayed_at: None,
+                    thumbnails_total: 0,
+                    thumbnails_settled: 0,
+                    thumbnails_settled_at: None,
+                });
                 let preserve_thumbnails = matches!(history, HistoryRequest::Refresh)
                     && self.directory_path == PathBuf::from(&response.path);
                 self.address = response.path.clone();

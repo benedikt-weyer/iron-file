@@ -36,6 +36,9 @@ message FileEntry {
   bool is_symlink = 5;
   int64 modified_at = 6;
   int64 created_at = 7;
+  bool directory_complete = 8;
+  uint64 directory_enumeration_ms = 9;
+  uint32 directory_entry_count = 10;
 }
 
 message ThumbnailRequest {

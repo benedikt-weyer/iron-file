@@ -72,9 +72,20 @@ impl FileBrowser for FileBrowserService {
     ) -> Result<Response<Self::ListDirectoryStream>, Status> {
         let path = PathBuf::from(request.into_inner().path);
         self.log(format!("Listing directory {}", path.display()));
+        let started_at = std::time::Instant::now();
         let entries = directory_entries(&path).map_err(Status::internal)?;
+        let entry_count = entries.len() as u32;
+        let enumeration_ms = started_at.elapsed().as_millis() as u64;
         Ok(Response::new(Box::pin(tokio_stream::iter(
-            entries.into_iter().map(Ok),
+            entries
+                .into_iter()
+                .map(Ok)
+                .chain(std::iter::once(Ok(FileEntry {
+                    directory_complete: true,
+                    directory_enumeration_ms: enumeration_ms,
+                    directory_entry_count: entry_count,
+                    ..FileEntry::default()
+                }))),
         ))))
     }
 
@@ -526,6 +537,9 @@ fn directory_entries(path: &Path) -> Result<Vec<FileEntry>, String> {
                     .and_then(|metadata| metadata.created().ok())
                     .and_then(timestamp_seconds)
                     .unwrap_or_default(),
+                directory_complete: false,
+                directory_enumeration_ms: 0,
+                directory_entry_count: 0,
             }
         })
         .collect::<Vec<_>>();
@@ -1100,6 +1114,7 @@ mod tests {
                 is_symlink: false,
                 modified_at: 0,
                 created_at: 0,
+                ..FileEntry::default()
             },
             FileEntry {
                 name: "visible-file".into(),
@@ -1109,6 +1124,7 @@ mod tests {
                 is_symlink: false,
                 modified_at: 0,
                 created_at: 0,
+                ..FileEntry::default()
             },
             FileEntry {
                 name: ".hidden-folder".into(),
@@ -1118,6 +1134,7 @@ mod tests {
                 is_symlink: false,
                 modified_at: 0,
                 created_at: 0,
+                ..FileEntry::default()
             },
             FileEntry {
                 name: "visible-folder".into(),
@@ -1127,6 +1144,7 @@ mod tests {
                 is_symlink: false,
                 modified_at: 0,
                 created_at: 0,
+                ..FileEntry::default()
             },
         ];
 

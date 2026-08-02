@@ -305,6 +305,7 @@ impl fmt::Display for ContextMenuItem {
 pub enum QuickToolbarItem {
     Refresh,
     CloneWindow,
+    PerformanceDebugger,
     ToggleHiddenFiles,
     Sort,
     FolderSort,
@@ -313,9 +314,10 @@ pub enum QuickToolbarItem {
 }
 
 impl QuickToolbarItem {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Refresh,
         Self::CloneWindow,
+        Self::PerformanceDebugger,
         Self::ToggleHiddenFiles,
         Self::Sort,
         Self::FolderSort,
@@ -394,6 +396,7 @@ impl fmt::Display for QuickToolbarItem {
         formatter.write_str(match self {
             Self::Refresh => "Refresh folder",
             Self::CloneWindow => "Clone window",
+            Self::PerformanceDebugger => "Performance debugger",
             Self::ToggleHiddenFiles => "Show hidden files",
             Self::Sort => "Sort entries",
             Self::FolderSort => "Override folder sorting",
