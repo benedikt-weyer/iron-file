@@ -3,6 +3,7 @@ use std::{
     io::{self, BufWriter, Cursor},
     path::{Path, PathBuf},
     pin::Pin,
+    process::Command,
     time::{Duration, SystemTime},
 };
 
@@ -979,6 +980,10 @@ fn thumbnail_for(path: &Path, directory: &Path) -> Result<ThumbnailOutcome, Stri
         write_thumbnail(three_d_model_image(path)?, &thumbnail_path)?;
         return Ok(ThumbnailOutcome::Generated(thumbnail_path));
     }
+    if is_video(path) {
+        write_video_thumbnail(path, &thumbnail_path)?;
+        return Ok(ThumbnailOutcome::Generated(thumbnail_path));
+    }
 
     let image = match image_from_path(path).or_else(|| audio_cover_image(path)) {
         Some(image) => image,
@@ -1002,6 +1007,19 @@ fn is_three_d_model(path: &Path) -> bool {
             ["stl", "obj", "3mf"]
                 .iter()
                 .any(|format| extension.eq_ignore_ascii_case(format))
+        })
+}
+
+fn is_video(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            [
+                "3gp", "asf", "avi", "flv", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ogv",
+                "webm", "wmv",
+            ]
+            .iter()
+            .any(|format| extension.eq_ignore_ascii_case(format))
         })
 }
 
@@ -1069,6 +1087,42 @@ fn audio_cover_image(path: &Path) -> Option<DynamicImage> {
         .ok()?
         .decode()
         .ok()
+}
+
+fn write_video_thumbnail(path: &Path, thumbnail_path: &Path) -> Result<(), String> {
+    let directory = thumbnail_path
+        .parent()
+        .ok_or_else(|| format!("{} has no parent directory", thumbnail_path.display()))?;
+    std::fs::create_dir_all(directory)
+        .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
+    let temporary_path = thumbnail_path.with_extension("tmp.png");
+    let ffmpeg = std::env::var_os("IRON_FILE_FFMPEG").unwrap_or_else(|| "ffmpeg".into());
+    let status = Command::new(ffmpeg)
+        .args(["-v", "error", "-y", "-ss", "00:00:01", "-i"])
+        .arg(path)
+        .args([
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=256:256:force_original_aspect_ratio=decrease",
+        ])
+        .arg(&temporary_path)
+        .status()
+        .map_err(|error| format!("could not run ffmpeg for {}: {error}", path.display()))?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&temporary_path);
+        return Err(format!(
+            "ffmpeg could not create a thumbnail for {}",
+            path.display()
+        ));
+    }
+    std::fs::rename(&temporary_path, thumbnail_path).map_err(|error| {
+        format!(
+            "could not move {} to {}: {error}",
+            temporary_path.display(),
+            thumbnail_path.display()
+        )
+    })
 }
 
 fn write_thumbnail(image: DynamicImage, thumbnail_path: &Path) -> Result<(), String> {
@@ -1148,6 +1202,14 @@ mod tests {
         assert!(is_three_d_model(Path::new("model.OBJ")));
         assert!(is_three_d_model(Path::new("model.3mf")));
         assert!(!is_three_d_model(Path::new("model.ply")));
+    }
+
+    #[test]
+    fn identifies_supported_video_paths_case_insensitively() {
+        assert!(is_video(Path::new("clip.mp4")));
+        assert!(is_video(Path::new("recording.MKV")));
+        assert!(is_video(Path::new("movie.webm")));
+        assert!(!is_video(Path::new("sound.mp3")));
     }
 
     #[test]
