@@ -592,6 +592,7 @@ enum PreferenceOption {
     BorderRadius,
     Layout,
     ItemSize,
+    MaxNameLines,
     Preview,
     SingleClickFolders,
     IconTheme,
@@ -694,6 +695,7 @@ enum Message {
     CancelAccentPicker,
     BrowserLayoutSelected(BrowserLayout),
     BrowserItemSizeChanged(u16),
+    MaxNameLinesChanged(u8),
     PreviewToggled(bool),
     ToggleHiddenFiles,
     SingleClickFoldersToggled(bool),
@@ -1443,6 +1445,12 @@ impl Gui {
                 self.save_browser_settings(browser);
                 Task::none()
             }
+            Message::MaxNameLinesChanged(max_name_lines) => {
+                let mut browser = self.active_browser_settings();
+                browser.max_name_lines = max_name_lines.clamp(1, 5);
+                self.save_browser_settings(browser);
+                Task::none()
+            }
             Message::PreviewToggled(preview_enabled) => {
                 let mut browser = self.active_browser_settings();
                 browser.preview_enabled = preview_enabled;
@@ -1860,6 +1868,9 @@ impl Gui {
             PreferenceOption::BorderRadius => theme.border_radius == theme_defaults.border_radius,
             PreferenceOption::Layout => browser.layout == browser_defaults.layout,
             PreferenceOption::ItemSize => browser.item_size == browser_defaults.item_size,
+            PreferenceOption::MaxNameLines => {
+                browser.max_name_lines == browser_defaults.max_name_lines
+            }
             PreferenceOption::Preview => {
                 browser.preview_enabled == browser_defaults.preview_enabled
             }
@@ -2431,6 +2442,7 @@ impl Gui {
             }
             PreferenceOption::Layout
             | PreferenceOption::ItemSize
+            | PreferenceOption::MaxNameLines
             | PreferenceOption::Preview
             | PreferenceOption::SingleClickFolders
             | PreferenceOption::IconTheme
@@ -2444,6 +2456,9 @@ impl Gui {
                 match option {
                     PreferenceOption::Layout => browser.layout = defaults.layout,
                     PreferenceOption::ItemSize => browser.item_size = defaults.item_size,
+                    PreferenceOption::MaxNameLines => {
+                        browser.max_name_lines = defaults.max_name_lines
+                    }
                     PreferenceOption::Preview => browser.preview_enabled = defaults.preview_enabled,
                     PreferenceOption::SingleClickFolders => {
                         browser.single_click_opens_folders = defaults.single_click_opens_folders

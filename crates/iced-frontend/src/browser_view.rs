@@ -1,9 +1,12 @@
 use super::*;
+use iced::widget::text::Wrapping;
 use iced::widget::{column, row, stack};
 
 impl Gui {
     pub(super) fn browser_view(&self) -> Element<'_, Message> {
         let browser_settings = self.active_browser_settings();
+        let max_name_lines = usize::from(browser_settings.max_name_lines.clamp(1, 5));
+        let name_height = 20.0 * max_name_lines as f32;
         let visible_entries = self
             .entries
             .iter()
@@ -20,7 +23,10 @@ impl Gui {
                             row![
                                 icon,
                                 tooltip(
-                                    text(truncate_label(&entry.name, 80)).width(Length::Fill),
+                                    text(truncate_label(&entry.name, 80 * max_name_lines))
+                                        .width(Length::Fill)
+                                        .height(Length::Fixed(name_height))
+                                        .wrapping(Wrapping::WordOrGlyph),
                                     text(&entry.name),
                                     tooltip::Position::Bottom,
                                 )
@@ -50,7 +56,10 @@ impl Gui {
                             row![
                                 icon,
                                 tooltip(
-                                    text(truncate_label(&entry.name, 80)).width(Length::Fill),
+                                    text(truncate_label(&entry.name, 80 * max_name_lines))
+                                        .width(Length::Fill)
+                                        .height(Length::Fixed(name_height))
+                                        .wrapping(Wrapping::WordOrGlyph),
                                     text(&entry.name),
                                     tooltip::Position::Bottom,
                                 )
@@ -79,7 +88,8 @@ impl Gui {
             responsive(move |size| {
                 let tile_width = f32::from(browser_settings.item_size) * 3.5;
                 let tile_height = tile_width * 1.2;
-                let max_tile_name_characters = (tile_width / 8.0).floor().max(8.0) as usize;
+                let max_tile_name_characters =
+                    (tile_width / 8.0).floor().max(8.0) as usize * max_name_lines;
                 let columns = (size.width / tile_width).floor().max(1.0) as usize;
                 tile_columns.set(columns);
                 let tiles =
@@ -101,7 +111,9 @@ impl Gui {
                                                 &entry.name,
                                                 max_tile_name_characters,
                                             ))
-                                            .width(Length::Fill),
+                                            .width(Length::Fill)
+                                            .height(Length::Fixed(name_height))
+                                            .wrapping(Wrapping::WordOrGlyph),
                                             text(&entry.name),
                                             tooltip::Position::Bottom,
                                         )
@@ -1253,6 +1265,8 @@ impl Gui {
     }
 
     fn sidebar_view(&self) -> Element<'_, Message> {
+        let max_name_lines = usize::from(self.active_browser_settings().max_name_lines.clamp(1, 5));
+        let name_height = 20.0 * max_name_lines as f32;
         let locations = self.active_sidebar_locations().into_iter().fold(
             column![].spacing(6),
             |column, location| {
@@ -1266,7 +1280,10 @@ impl Gui {
                     row![
                         icon_text(sidebar_icon(&location)),
                         tooltip(
-                            text(truncate_label(&label, 24)).width(Length::Fill),
+                            text(truncate_label(&label, 24 * max_name_lines))
+                                .width(Length::Fill)
+                                .height(Length::Fixed(name_height))
+                                .wrapping(Wrapping::WordOrGlyph),
                             text(label),
                             tooltip::Position::Bottom,
                         )

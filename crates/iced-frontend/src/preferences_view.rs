@@ -61,6 +61,14 @@ impl Gui {
             ]
             .spacing(10),
             row![
+                text("Maximum name lines"),
+                slider(1..=5, browser.max_name_lines, Message::MaxNameLinesChanged)
+                    .width(Length::Fill),
+                text(browser.max_name_lines.to_string()),
+                self.preference_reset_button(PreferenceOption::MaxNameLines),
+            ]
+            .spacing(10),
+            row![
                 toggler(browser.preview_enabled)
                     .label("Show preview pane")
                     .on_toggle(Message::PreviewToggled)

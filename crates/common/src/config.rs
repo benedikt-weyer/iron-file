@@ -386,6 +386,8 @@ impl fmt::Display for QuickToolbarItem {
 pub struct BrowserSettings {
     pub item_size: u16,
     pub layout: BrowserLayout,
+    #[serde(default = "default_max_name_lines")]
+    pub max_name_lines: u8,
     #[serde(default = "default_preview_enabled")]
     pub preview_enabled: bool,
     #[serde(default = "default_show_hidden_files")]
@@ -804,6 +806,10 @@ fn default_single_click_opens_folders() -> bool {
 
 fn default_preview_enabled() -> bool {
     default_browser_settings().preview_enabled
+}
+
+fn default_max_name_lines() -> u8 {
+    default_browser_settings().max_name_lines
 }
 
 fn default_show_hidden_files() -> bool {
