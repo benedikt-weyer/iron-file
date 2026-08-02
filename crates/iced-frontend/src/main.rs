@@ -2737,6 +2737,8 @@ impl Gui {
                 scrollable(tiles)
                     .width(Length::Fill)
                     .height(Length::Fill)
+                    .direction(modern_vertical_scrollbar())
+                    .style(modern_scrollable_style)
                     .into()
             })
             .into()
@@ -2892,11 +2894,18 @@ impl Gui {
                     .height(Length::Fill)
                     .into()
             } else {
-                scrollable(entries).width(Length::FillPortion(1)).into()
+                scrollable(entries)
+                    .width(Length::FillPortion(1))
+                    .direction(modern_vertical_scrollbar())
+                    .style(modern_scrollable_style)
+                    .into()
             };
             row![
                 file_pane,
-                scrollable(text(&self.content)).width(Length::FillPortion(2)),
+                scrollable(text(&self.content))
+                    .width(Length::FillPortion(2))
+                    .direction(modern_vertical_scrollbar())
+                    .style(modern_scrollable_style),
             ]
             .spacing(16)
             .width(Length::Fill)
@@ -2908,6 +2917,8 @@ impl Gui {
             scrollable(entries)
                 .width(Length::Fill)
                 .height(Length::Fill)
+                .direction(modern_vertical_scrollbar())
+                .style(modern_scrollable_style)
                 .into()
         };
         let selection_overlay: Option<Element<'_, Message>> =
@@ -3785,10 +3796,14 @@ impl Gui {
         .on_enter(Message::SidebarDragTargetEnd)
         .on_exit(Message::SidebarDragTargetEndCleared);
         let sidebar_content = column![locations, end_drop_zone, mounts].spacing(20);
-        container(scrollable(sidebar_content))
-            .width(Length::Fixed(f32::from(self.sidebar_width())))
-            .height(Length::Fill)
-            .into()
+        container(
+            scrollable(sidebar_content)
+                .direction(modern_vertical_scrollbar())
+                .style(modern_scrollable_style),
+        )
+        .width(Length::Fixed(f32::from(self.sidebar_width())))
+        .height(Length::Fill)
+        .into()
     }
 
     fn preferences_view(&self) -> Element<'_, Message> {
@@ -4093,124 +4108,130 @@ impl Gui {
                 column.push(text(path.display().to_string()))
             });
 
-        let page = container(scrollable(
-            column![
-                row![back_button, text("Preferences").size(24)].spacing(12),
-                column![text("Profiles").size(18), profiles, create_profile].spacing(10),
+        let page = container(
+            scrollable(
                 column![
-                    row![
-                        text("Color mode").size(18),
-                        button(
-                            row![icon_text("rotate-ccw").size(16), text("Reset profile")]
-                                .spacing(6)
-                        )
-                        .on_press(Message::RequestProfileReset),
-                    ]
-                    .spacing(8),
-                    row![
-                        container(options).width(Length::Fill),
-                        self.preference_reset_button(PreferenceOption::ColorMode),
-                    ],
-                    row![
-                        container(self.accent_picker_button(false)).width(Length::Fill),
-                        self.preference_reset_button(PreferenceOption::LightAccent),
-                    ],
-                    row![
-                        container(self.accent_picker_button(true)).width(Length::Fill),
-                        self.preference_reset_button(PreferenceOption::DarkAccent),
-                    ],
-                    row![
-                        text("Background opacity"),
-                        slider(
-                            0..=100,
-                            theme.background_opacity.min(100),
-                            Message::BackgroundOpacityChanged,
-                        )
-                        .width(Length::Fill),
-                        text(format!("{}%", theme.background_opacity.min(100))),
-                        self.preference_reset_button(PreferenceOption::BackgroundOpacity),
+                    row![back_button, text("Preferences").size(24)].spacing(12),
+                    column![text("Profiles").size(18), profiles, create_profile].spacing(10),
+                    column![
+                        row![
+                            text("Color mode").size(18),
+                            button(
+                                row![icon_text("rotate-ccw").size(16), text("Reset profile")]
+                                    .spacing(6)
+                            )
+                            .on_press(Message::RequestProfileReset),
+                        ]
+                        .spacing(8),
+                        row![
+                            container(options).width(Length::Fill),
+                            self.preference_reset_button(PreferenceOption::ColorMode),
+                        ],
+                        row![
+                            container(self.accent_picker_button(false)).width(Length::Fill),
+                            self.preference_reset_button(PreferenceOption::LightAccent),
+                        ],
+                        row![
+                            container(self.accent_picker_button(true)).width(Length::Fill),
+                            self.preference_reset_button(PreferenceOption::DarkAccent),
+                        ],
+                        row![
+                            text("Background opacity"),
+                            slider(
+                                0..=100,
+                                theme.background_opacity.min(100),
+                                Message::BackgroundOpacityChanged,
+                            )
+                            .width(Length::Fill),
+                            text(format!("{}%", theme.background_opacity.min(100))),
+                            self.preference_reset_button(PreferenceOption::BackgroundOpacity),
+                        ]
+                        .spacing(10),
+                        row![
+                            text("Blur strength"),
+                            slider(
+                                0..=5,
+                                theme.context_menu_blur_strength.min(5),
+                                Message::ContextMenuBlurStrengthChanged,
+                            )
+                            .width(Length::Fill),
+                            text(format!("sigma {}", theme.context_menu_blur_strength.min(5))),
+                            self.preference_reset_button(PreferenceOption::ContextMenuBlurStrength),
+                        ]
+                        .spacing(10),
+                        row![
+                            text("Kernel size"),
+                            pick_list(
+                                ContextMenuBlurKernelSize::OPTIONS,
+                                Some(theme.context_menu_blur_kernel_size),
+                                Message::ContextMenuBlurKernelSizeChanged,
+                            )
+                            .width(Length::Fill),
+                            self.preference_reset_button(
+                                PreferenceOption::ContextMenuBlurKernelSize
+                            ),
+                        ]
+                        .spacing(10),
+                        row![
+                            text("Corner radius"),
+                            slider(
+                                0..=8,
+                                theme.border_radius.min(8),
+                                Message::BorderRadiusChanged,
+                            )
+                            .width(Length::Fill),
+                            text(format!("{} px", theme.border_radius.min(8))),
+                            self.preference_reset_button(PreferenceOption::BorderRadius),
+                        ]
+                        .spacing(10),
                     ]
                     .spacing(10),
-                    row![
-                        text("Blur strength"),
-                        slider(
-                            0..=5,
-                            theme.context_menu_blur_strength.min(5),
-                            Message::ContextMenuBlurStrengthChanged,
-                        )
-                        .width(Length::Fill),
-                        text(format!("sigma {}", theme.context_menu_blur_strength.min(5))),
-                        self.preference_reset_button(PreferenceOption::ContextMenuBlurStrength),
+                    column![text("Browser").size(18), browser_options].spacing(10),
+                    column![
+                        row![
+                            text("Keyboard shortcuts").size(18),
+                            self.preference_reset_button(PreferenceOption::KeyboardShortcuts),
+                        ]
+                        .spacing(8),
+                        keyboard_shortcut_options,
                     ]
                     .spacing(10),
-                    row![
-                        text("Kernel size"),
-                        pick_list(
-                            ContextMenuBlurKernelSize::OPTIONS,
-                            Some(theme.context_menu_blur_kernel_size),
-                            Message::ContextMenuBlurKernelSizeChanged,
-                        )
-                        .width(Length::Fill),
-                        self.preference_reset_button(PreferenceOption::ContextMenuBlurKernelSize),
+                    column![
+                        row![
+                            text("File context menu").size(18),
+                            self.preference_reset_button(PreferenceOption::FileContextMenuItems),
+                        ]
+                        .spacing(8),
+                        file_context_menu_options,
                     ]
                     .spacing(10),
-                    row![
-                        text("Corner radius"),
-                        slider(
-                            0..=8,
-                            theme.border_radius.min(8),
-                            Message::BorderRadiusChanged,
-                        )
-                        .width(Length::Fill),
-                        text(format!("{} px", theme.border_radius.min(8))),
-                        self.preference_reset_button(PreferenceOption::BorderRadius),
+                    column![
+                        row![
+                            text("Folder context menu").size(18),
+                            self.preference_reset_button(PreferenceOption::FolderContextMenuItems),
+                        ]
+                        .spacing(8),
+                        folder_context_menu_options,
                     ]
                     .spacing(10),
-                ]
-                .spacing(10),
-                column![text("Browser").size(18), browser_options].spacing(10),
-                column![
-                    row![
-                        text("Keyboard shortcuts").size(18),
-                        self.preference_reset_button(PreferenceOption::KeyboardShortcuts),
+                    column![
+                        row![
+                            text("Quick toolbar").size(18),
+                            self.preference_reset_button(PreferenceOption::QuickToolbarItems),
+                        ]
+                        .spacing(8),
+                        quick_toolbar_options,
                     ]
-                    .spacing(8),
-                    keyboard_shortcut_options,
+                    .spacing(10),
+                    column![text("Configuration search paths").size(18), search_paths].spacing(10),
                 ]
-                .spacing(10),
-                column![
-                    row![
-                        text("File context menu").size(18),
-                        self.preference_reset_button(PreferenceOption::FileContextMenuItems),
-                    ]
-                    .spacing(8),
-                    file_context_menu_options,
-                ]
-                .spacing(10),
-                column![
-                    row![
-                        text("Folder context menu").size(18),
-                        self.preference_reset_button(PreferenceOption::FolderContextMenuItems),
-                    ]
-                    .spacing(8),
-                    folder_context_menu_options,
-                ]
-                .spacing(10),
-                column![
-                    row![
-                        text("Quick toolbar").size(18),
-                        self.preference_reset_button(PreferenceOption::QuickToolbarItems),
-                    ]
-                    .spacing(8),
-                    quick_toolbar_options,
-                ]
-                .spacing(10),
-                column![text("Configuration search paths").size(18), search_paths].spacing(10),
-            ]
-            .spacing(28)
-            .padding(16)
-            .width(Length::Fill),
-        ))
+                .spacing(28)
+                .padding(16)
+                .width(Length::Fill),
+            )
+            .direction(modern_vertical_scrollbar())
+            .style(modern_scrollable_style),
+        )
         .width(Length::Fill)
         .height(Length::Fill);
         let reset_confirmation = self.pending_profile_reset.then(|| {
@@ -4536,6 +4557,53 @@ fn context_menu_button_style(theme: &Theme, status: button_style::Status) -> but
     } else {
         style
     }
+}
+
+fn modern_scrollable_style(
+    theme: &Theme,
+    status: iced::widget::scrollable::Status,
+) -> iced::widget::scrollable::Style {
+    let palette = theme.extended_palette();
+    let thumb_color = match status {
+        iced::widget::scrollable::Status::Active => {
+            palette.background.strong.color.scale_alpha(0.45)
+        }
+        iced::widget::scrollable::Status::Hovered { .. } => {
+            theme.palette().primary.scale_alpha(0.7)
+        }
+        iced::widget::scrollable::Status::Dragged { .. } => theme.palette().primary,
+    };
+    let rail = iced::widget::scrollable::Rail {
+        background: None,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 4.0.into(),
+        },
+        scroller: iced::widget::scrollable::Scroller {
+            color: thumb_color,
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: 4.0.into(),
+            },
+        },
+    };
+    iced::widget::scrollable::Style {
+        container: iced::widget::container::Style::default(),
+        vertical_rail: rail,
+        horizontal_rail: rail,
+        gap: None,
+    }
+}
+
+fn modern_vertical_scrollbar() -> iced::widget::scrollable::Direction {
+    iced::widget::scrollable::Direction::Vertical(
+        iced::widget::scrollable::Scrollbar::new()
+            .width(7.0)
+            .scroller_width(5.0)
+            .margin(2.0),
+    )
 }
 
 fn sidebar_icon(location: &SidebarLocation) -> &'static str {
