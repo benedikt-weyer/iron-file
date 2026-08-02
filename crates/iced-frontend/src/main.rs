@@ -33,6 +33,7 @@ use serde::Deserialize;
 use tokio::runtime::Runtime;
 
 const DETACHED_ENV: &str = "IRON_FILE_DETACHED";
+const NAVIGATION_CONTROL_HEIGHT: f32 = 32.0;
 static BORDER_RADIUS: AtomicU8 = AtomicU8::new(6);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -182,6 +183,20 @@ fn rounded_button_style(theme: &Theme, status: button_style::Status) -> button_s
 fn rounded_text_button_style(theme: &Theme, status: button_style::Status) -> button_style::Style {
     let base = button_style::text(theme, status);
     button_style::Style {
+        border: Border {
+            radius: border_radius().into(),
+            ..base.border
+        },
+        ..base
+    }
+}
+
+fn rounded_text_input_style(
+    theme: &Theme,
+    status: iced::widget::text_input::Status,
+) -> iced::widget::text_input::Style {
+    let base = iced::widget::text_input::default(theme, status);
+    iced::widget::text_input::Style {
         border: Border {
             radius: border_radius().into(),
             ..base.border
@@ -597,6 +612,11 @@ impl Gui {
             iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
                 Some(Message::ModifiersChanged(modifiers))
             }
+            iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
+                if key == keyboard::Key::Named(keyboard::key::Named::Escape) =>
+            {
+                Some(Message::CancelAddressEdit)
+            }
             iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
                 if modifiers.command() =>
             {
@@ -761,6 +781,9 @@ impl Gui {
                 Task::none()
             }
             Message::CancelAddressEdit => {
+                if !self.editing_address {
+                    return Task::none();
+                }
                 self.address = self.directory_path.display().to_string();
                 self.editing_address = false;
                 Task::none()
@@ -2571,12 +2594,17 @@ impl Gui {
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
+        let browser_press = if self.editing_address {
+            Message::CancelAddressEdit
+        } else {
+            Message::StartRectangleSelection
+        };
         let browser = mouse_area(browser)
             .on_right_press(Message::ShowEntryContext {
                 path: self.directory_path.clone(),
                 is_directory: true,
             })
-            .on_press(Message::StartRectangleSelection)
+            .on_press(browser_press)
             .on_move(Message::RectanglePointerMoved)
             .on_release(Message::FinishRectangleSelection);
         let info_overlay: Element<'_, Message> = container(
@@ -3054,11 +3082,18 @@ impl Gui {
 
     fn address_control(&self) -> Element<'_, Message> {
         if self.editing_address {
-            return text_input("Path", &self.address)
-                .on_input(Message::AddressChanged)
-                .on_submit(Message::OpenAddress)
-                .width(Length::Fill)
-                .into();
+            return container(
+                text_input("Path", &self.address)
+                    .on_input(Message::AddressChanged)
+                    .on_submit(Message::OpenAddress)
+                    .padding([6, 5])
+                    .style(rounded_text_input_style)
+                    .width(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fixed(NAVIGATION_CONTROL_HEIGHT))
+            .align_y(iced::alignment::Vertical::Center)
+            .into();
         }
 
         let path = PathBuf::from(&self.address);
@@ -3096,24 +3131,30 @@ impl Gui {
             );
         }
 
-        let breadcrumbs = container(breadcrumbs)
-            .padding([2, 6])
-            .width(Length::Fill)
-            .align_y(iced::alignment::Vertical::Center)
-            .style(|theme| {
-                iced::widget::container::Style::default().border(Border {
-                    color: theme.extended_palette().background.strong.color,
-                    width: 1.0,
-                    radius: border_radius().into(),
-                })
-            });
-        stack![
-            mouse_area(Space::new(Length::Fill, Length::Fixed(30.0)))
+        container(
+            stack![
+                mouse_area(Space::new(
+                    Length::Fill,
+                    Length::Fixed(NAVIGATION_CONTROL_HEIGHT),
+                ))
                 .on_press(Message::StartAddressEdit),
-            breadcrumbs,
-        ]
+                breadcrumbs,
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill),
+        )
+        .padding([0, 6])
         .width(Length::Fill)
-        .height(Length::Shrink)
+        .height(Length::Fixed(NAVIGATION_CONTROL_HEIGHT))
+        .clip(true)
+        .align_y(iced::alignment::Vertical::Center)
+        .style(|theme: &Theme| {
+            iced::widget::container::Style::default().border(Border {
+                color: theme.extended_palette().background.strong.color,
+                width: 1.0,
+                radius: border_radius().into(),
+            })
+        })
         .into()
     }
 
