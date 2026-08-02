@@ -2592,13 +2592,18 @@ impl Gui {
             .height(Length::Fill)
             .into();
         let resize_handle = mouse_area(
-            container(Space::new(Length::Fixed(6.0), Length::Fill))
-                .width(Length::Fixed(6.0))
-                .height(Length::Fill)
-                .style(|_| {
-                    iced::widget::container::Style::default()
-                        .background(Color::from_rgba8(128, 128, 128, 0.25))
-                }),
+            row![
+                Space::with_width(Length::Fixed(12.0)),
+                container(Space::new(Length::Fixed(2.0), Length::Fill))
+                    .width(Length::Fixed(2.0))
+                    .height(Length::Fill)
+                    .style(|_| {
+                        iced::widget::container::Style::default()
+                            .background(Color::from_rgba8(128, 128, 128, 0.25))
+                    }),
+            ]
+            .width(Length::Fixed(14.0))
+            .height(Length::Fill),
         )
         .on_press(Message::StartSidebarResize)
         .on_release(Message::FinishSidebarResize)
