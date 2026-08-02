@@ -13,6 +13,7 @@ border_radius = 6
 [browser]
 item_size = 32
 layout = "list"
+name_alignment = "center"
 smooth_scrolling = true
 max_name_lines = 1
 preview_enabled = false

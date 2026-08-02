@@ -205,6 +205,14 @@ pub enum BrowserLayout {
     Tiles,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NameAlignment {
+    Left,
+    Center,
+    Right,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ContextMenuItem {
@@ -386,6 +394,8 @@ impl fmt::Display for QuickToolbarItem {
 pub struct BrowserSettings {
     pub item_size: u16,
     pub layout: BrowserLayout,
+    #[serde(default = "default_name_alignment")]
+    pub name_alignment: NameAlignment,
     #[serde(default = "default_smooth_scrolling")]
     pub smooth_scrolling: bool,
     #[serde(default = "default_max_name_lines")]
@@ -814,6 +824,10 @@ fn default_max_name_lines() -> u8 {
     default_browser_settings().max_name_lines
 }
 
+fn default_name_alignment() -> NameAlignment {
+    default_browser_settings().name_alignment
+}
+
 fn default_smooth_scrolling() -> bool {
     default_browser_settings().smooth_scrolling
 }
@@ -1039,6 +1053,29 @@ mod tests {
                 QuickToolbarItem::ExtractSelection,
                 QuickToolbarItem::ToggleHiddenFiles,
             ]
+        );
+    }
+
+    #[test]
+    fn defaults_and_reads_name_alignment() {
+        assert_eq!(
+            default_browser_settings().name_alignment,
+            NameAlignment::Center
+        );
+
+        let profile: ProfileFile = toml::from_str(
+            r##"
+                [browser]
+                item_size = 32
+                layout = "list"
+                name_alignment = "right"
+            "##,
+        )
+        .unwrap();
+
+        assert_eq!(
+            profile.browser.unwrap().name_alignment,
+            NameAlignment::Right
         );
     }
 

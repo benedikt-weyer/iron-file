@@ -45,3 +45,7 @@ The `"folder-sort"` control stores per-folder entries in
 The `[browser]` `keyboard_shortcuts` array maps actions to keys. Its default
 binding is `{ action = "rename-selection", key = "F2" }`. Set `key` to an
 empty string to disable an action.
+
+The `[browser]` `name_alignment` setting controls file and folder label
+alignment. Valid values are `"left"`, `"center"`, and `"right"`; the default is
+`"center"`.

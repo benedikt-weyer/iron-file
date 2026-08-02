@@ -34,8 +34,8 @@ use iron_file_common::{
     browse_with_thumbnails, compress_entries,
     config::{
         BrowserLayout, BrowserSettings, ColorMode, ConfigStore, ContextMenuBlurKernelSize,
-        ContextMenuItem, EntrySortOrder, FolderSortOverride, KeyboardShortcutAction, Profile,
-        QuickToolbarItem, SidebarLocation,
+        ContextMenuItem, EntrySortOrder, FolderSortOverride, KeyboardShortcutAction, NameAlignment,
+        Profile, QuickToolbarItem, SidebarLocation,
     },
     copy_entries, create_entry, create_symlinks, create_thumbnail, delete_entries, ensure_backend,
     extract_archives, inspect_entry, pipe_backend_logs, proto, rename_entry, restart_backend,
@@ -591,6 +591,7 @@ enum PreferenceOption {
     KeyboardShortcuts,
     BorderRadius,
     Layout,
+    NameAlignment,
     SmoothScrolling,
     ItemSize,
     MaxNameLines,
@@ -695,6 +696,7 @@ enum Message {
     ConfirmAccentPicker,
     CancelAccentPicker,
     BrowserLayoutSelected(BrowserLayout),
+    NameAlignmentSelected(NameAlignment),
     SmoothScrollingToggled(bool),
     BrowserItemSizeChanged(u16),
     MaxNameLinesChanged(u8),
@@ -1441,6 +1443,12 @@ impl Gui {
                 self.save_browser_settings(browser);
                 Task::none()
             }
+            Message::NameAlignmentSelected(name_alignment) => {
+                let mut browser = self.active_browser_settings();
+                browser.name_alignment = name_alignment;
+                self.save_browser_settings(browser);
+                Task::none()
+            }
             Message::SmoothScrollingToggled(smooth_scrolling) => {
                 let mut browser = self.active_browser_settings();
                 browser.smooth_scrolling = smooth_scrolling;
@@ -1875,6 +1883,9 @@ impl Gui {
             }
             PreferenceOption::BorderRadius => theme.border_radius == theme_defaults.border_radius,
             PreferenceOption::Layout => browser.layout == browser_defaults.layout,
+            PreferenceOption::NameAlignment => {
+                browser.name_alignment == browser_defaults.name_alignment
+            }
             PreferenceOption::SmoothScrolling => {
                 browser.smooth_scrolling == browser_defaults.smooth_scrolling
             }
@@ -2452,6 +2463,7 @@ impl Gui {
                 }
             }
             PreferenceOption::Layout
+            | PreferenceOption::NameAlignment
             | PreferenceOption::SmoothScrolling
             | PreferenceOption::ItemSize
             | PreferenceOption::MaxNameLines
@@ -2467,6 +2479,9 @@ impl Gui {
                 let mut browser = self.active_browser_settings();
                 match option {
                     PreferenceOption::Layout => browser.layout = defaults.layout,
+                    PreferenceOption::NameAlignment => {
+                        browser.name_alignment = defaults.name_alignment
+                    }
                     PreferenceOption::SmoothScrolling => {
                         browser.smooth_scrolling = defaults.smooth_scrolling
                     }

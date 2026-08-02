@@ -2,11 +2,43 @@ use super::*;
 use iced::widget::text::Wrapping;
 use iced::widget::{column, row, stack};
 
+fn name_label(
+    name: &str,
+    line_characters: usize,
+    max_lines: usize,
+    line_height: f32,
+    alignment: iced::alignment::Horizontal,
+) -> Element<'_, Message> {
+    let max_characters = line_characters.saturating_mul(max_lines);
+    let label = truncate_label(name, max_characters);
+    let characters = label.chars().collect::<Vec<_>>();
+    let lines = characters
+        .chunks(line_characters.max(1))
+        .map(|line| line.iter().collect::<String>());
+
+    lines
+        .fold(column![], |column, line| {
+            column.push(
+                text(line)
+                    .width(Length::Fill)
+                    .height(Length::Fixed(line_height))
+                    .align_x(alignment),
+            )
+        })
+        .width(Length::Fill)
+        .height(Length::Fixed(line_height * max_lines as f32))
+        .into()
+}
+
 impl Gui {
     pub(super) fn browser_view(&self) -> Element<'_, Message> {
         let browser_settings = self.active_browser_settings();
         let max_name_lines = usize::from(browser_settings.max_name_lines.clamp(1, 5));
-        let name_height = 20.0 * max_name_lines as f32;
+        let name_alignment = match browser_settings.name_alignment {
+            NameAlignment::Left => iced::alignment::Horizontal::Left,
+            NameAlignment::Center => iced::alignment::Horizontal::Center,
+            NameAlignment::Right => iced::alignment::Horizontal::Right,
+        };
         let visible_entries = self
             .entries
             .iter()
@@ -22,14 +54,7 @@ impl Gui {
                         button(
                             row![
                                 icon,
-                                tooltip(
-                                    text(truncate_label(&entry.name, 80 * max_name_lines))
-                                        .width(Length::Fill)
-                                        .height(Length::Fixed(name_height))
-                                        .wrapping(Wrapping::WordOrGlyph),
-                                    text(&entry.name),
-                                    tooltip::Position::Bottom,
-                                )
+                                name_label(&entry.name, 80, max_name_lines, 20.0, name_alignment,)
                             ]
                             .spacing(8)
                             .align_y(iced::alignment::Vertical::Top),
@@ -55,14 +80,7 @@ impl Gui {
                         button(
                             row![
                                 icon,
-                                tooltip(
-                                    text(truncate_label(&entry.name, 80 * max_name_lines))
-                                        .width(Length::Fill)
-                                        .height(Length::Fixed(name_height))
-                                        .wrapping(Wrapping::WordOrGlyph),
-                                    text(&entry.name),
-                                    tooltip::Position::Bottom,
-                                )
+                                name_label(&entry.name, 80, max_name_lines, 20.0, name_alignment,)
                             ]
                             .spacing(8)
                             .align_y(iced::alignment::Vertical::Top),
@@ -88,8 +106,7 @@ impl Gui {
             responsive(move |size| {
                 let tile_width = f32::from(browser_settings.item_size) * 3.5;
                 let tile_height = tile_width * 1.2;
-                let max_tile_name_characters =
-                    (tile_width / 8.0).floor().max(8.0) as usize * max_name_lines;
+                let tile_name_line_characters = (tile_width / 8.0).floor().max(8.0) as usize;
                 let columns = (size.width / tile_width).floor().max(1.0) as usize;
                 tile_columns.set(columns);
                 let tiles =
@@ -106,16 +123,12 @@ impl Gui {
                                 let tile_content = container(
                                     column![
                                         icon,
-                                        tooltip(
-                                            text(truncate_label(
-                                                &entry.name,
-                                                max_tile_name_characters,
-                                            ))
-                                            .width(Length::Fill)
-                                            .height(Length::Fixed(name_height))
-                                            .wrapping(Wrapping::WordOrGlyph),
-                                            text(&entry.name),
-                                            tooltip::Position::Bottom,
+                                        name_label(
+                                            &entry.name,
+                                            tile_name_line_characters,
+                                            max_name_lines,
+                                            20.0,
+                                            name_alignment,
                                         )
                                     ]
                                     .spacing(6)

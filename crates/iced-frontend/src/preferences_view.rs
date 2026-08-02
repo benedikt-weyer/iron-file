@@ -53,6 +53,32 @@ impl Gui {
                 self.preference_reset_button(PreferenceOption::Layout),
             ],
             row![
+                column![
+                    text("Name alignment"),
+                    radio(
+                        "Left",
+                        NameAlignment::Left,
+                        Some(browser.name_alignment),
+                        Message::NameAlignmentSelected,
+                    ),
+                    radio(
+                        "Center",
+                        NameAlignment::Center,
+                        Some(browser.name_alignment),
+                        Message::NameAlignmentSelected,
+                    ),
+                    radio(
+                        "Right",
+                        NameAlignment::Right,
+                        Some(browser.name_alignment),
+                        Message::NameAlignmentSelected,
+                    ),
+                ]
+                .spacing(6)
+                .width(Length::Fill),
+                self.preference_reset_button(PreferenceOption::NameAlignment),
+            ],
+            row![
                 text("Item size"),
                 slider(20..=64, browser.item_size, Message::BrowserItemSizeChanged)
                     .width(Length::Fill),
