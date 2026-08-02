@@ -16,6 +16,7 @@ use iced::{
         Space, button, column, container, image, mouse_area, pick_list, radio, responsive, row,
         scrollable, slider, stack, svg, text, text_input, toggler, tooltip,
     },
+    window,
 };
 use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{
@@ -36,6 +37,14 @@ fn main() -> iced::Result {
     iced::application("Iron File", Gui::update, Gui::view)
         .theme(Gui::theme)
         .subscription(Gui::subscription)
+        .window(window::Settings {
+            platform_specific: window::settings::PlatformSpecific {
+                // Must match iron-file.desktop so the desktop shell can resolve the dock icon.
+                application_id: "iron-file".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
         .run_with(|| {
             let gui = Gui::new();
             let task = gui.load_initial_directory();
