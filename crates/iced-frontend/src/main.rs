@@ -1338,6 +1338,7 @@ impl Gui {
                 Task::none()
             }
             Message::SidebarPressed(path) => {
+                self.sidebar_resize = None;
                 self.dragging_sidebar_location = Some(path);
                 self.sidebar_drop_target = None;
                 self.sidebar_drop_at_end = false;
@@ -3474,11 +3475,7 @@ impl Gui {
                 let is_drop_target = self.dragging_sidebar_location.is_some()
                     && !is_dragging
                     && self.sidebar_drop_target.as_ref() == Some(&location.path);
-                let label = if is_dragging {
-                    format!("Moving {}", location.label)
-                } else {
-                    location.label.clone()
-                };
+                let label = location.label.clone();
                 let item = container(
                     row![icon_text(sidebar_icon(&location)), text(label)]
                         .spacing(8)
@@ -3577,11 +3574,7 @@ impl Gui {
                 },
             );
         let mounts = column![mounted, unmounted].spacing(6);
-        let drop_zone_height = if self.dragging_sidebar_location.is_some() {
-            20.0
-        } else {
-            4.0
-        };
+        let drop_zone_height = 4.0;
         let end_drop_zone = mouse_area(
             container(Space::with_height(Length::Fixed(drop_zone_height)))
                 .width(Length::Fill)
