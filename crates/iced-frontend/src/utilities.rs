@@ -273,6 +273,23 @@ pub(super) fn rounded_pick_list_menu_style(theme: &Theme) -> iced::widget::overl
 }
 
 pub(super) fn sidebar_icon(location: &SidebarLocation) -> &'static str {
+    if let Some(icon) = location.icon.as_deref() {
+        return match icon {
+            "house" => "house",
+            "download" => "download",
+            "image" => "image",
+            "folder" => "folder",
+            "star" => "star",
+            "file-text" => "file-text",
+            "landmark" => "landmark",
+            "git-branch" => "git-branch",
+            "music" => "music",
+            "video" => "video",
+            "archive" => "archive",
+            "hard-drive" => "hard-drive",
+            _ => "folder",
+        };
+    }
     match location.label.as_str() {
         "Home" => "house",
         "Downloads" => "download",

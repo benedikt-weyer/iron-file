@@ -524,7 +524,9 @@ impl Gui {
                 let mut actions = column![].spacing(4);
                 let mut action_count = 0_u16;
                 let mut rendered_items = HashSet::new();
-                let context_menu_items = if entry.is_directory {
+                let context_menu_items: &[ContextMenuItem] = if entry.is_sidebar_location {
+                    &[]
+                } else if entry.is_directory {
                     &browser_settings.folder_context_menu_items
                 } else {
                     &browser_settings.file_context_menu_items
@@ -719,6 +721,66 @@ impl Gui {
                         actions = actions.push(action);
                         action_count += 1;
                     }
+                }
+                if entry.is_sidebar_location {
+                    let icon_picker = [
+                        "house",
+                        "download",
+                        "image",
+                        "folder",
+                        "star",
+                        "file-text",
+                        "landmark",
+                        "git-branch",
+                        "music",
+                        "video",
+                        "archive",
+                        "hard-drive",
+                    ]
+                    .chunks(3)
+                    .fold(column![].spacing(4), |column, icons| {
+                        column.push(icons.iter().fold(row![].spacing(4), |row, icon| {
+                            row.push(
+                                button(icon_text(icon).size(16))
+                                    .width(Length::Fill)
+                                    .style(context_menu_button_style)
+                                    .on_press(Message::SetSidebarLocationIcon {
+                                        path: entry.path.clone(),
+                                        icon: Some((*icon).to_owned()),
+                                    }),
+                            )
+                        }))
+                    });
+                    actions = actions
+                        .push(text("Icon").size(14))
+                        .push(icon_picker)
+                        .push(
+                            button(
+                                row![icon_text("rotate-ccw").size(16), text("Reset icon")]
+                                    .spacing(8),
+                            )
+                            .width(Length::Fill)
+                            .style(context_menu_button_style)
+                            .on_press(
+                                Message::SetSidebarLocationIcon {
+                                    path: entry.path.clone(),
+                                    icon: None,
+                                },
+                            ),
+                        )
+                        .push(
+                            button(
+                                row![
+                                    icon_text("folder-minus").size(16),
+                                    text("Remove from sidebar")
+                                ]
+                                .spacing(8),
+                            )
+                            .width(Length::Fill)
+                            .style(context_menu_button_style)
+                            .on_press(Message::RemoveContextFolderFromSidebar),
+                        );
+                    action_count += 7;
                 }
                 let theme_settings = self.active_theme_settings();
                 let context_menu_blur_strength = if theme_settings.background_opacity < 100 {
@@ -1357,10 +1419,7 @@ impl Gui {
                     mouse_area(Space::new(Length::Fill, Length::Fill))
                         .on_press(Message::SidebarPressed(location.path.clone()))
                         .on_release(Message::SidebarReleased(location.path.clone()))
-                        .on_right_press(Message::ShowEntryContext {
-                            path: location.path.clone(),
-                            is_directory: true,
-                        })
+                        .on_right_press(Message::ShowSidebarLocationContext(location.path.clone()))
                         .on_enter(Message::SidebarDragTarget(location.path.clone()))
                         .on_exit(Message::SidebarDragTargetCleared(location.path.clone())),
                 ]

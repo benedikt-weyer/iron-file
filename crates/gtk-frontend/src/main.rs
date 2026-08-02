@@ -452,6 +452,7 @@ fn add_folder_context_menu(
                 locations.push(SidebarLocation {
                     label,
                     path: action_path.clone(),
+                    icon: None,
                 });
             }
             if save_sidebar_locations(&action_config, locations).is_ok() {

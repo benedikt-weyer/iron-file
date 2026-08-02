@@ -43,6 +43,8 @@ pub struct Profile {
 pub struct SidebarLocation {
     pub label: String,
     pub path: PathBuf,
+    #[serde(default)]
+    pub icon: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1245,10 +1247,12 @@ mod tests {
             SidebarLocation {
                 label: "Projects".into(),
                 path: PathBuf::from("/tmp/projects"),
+                icon: None,
             },
             SidebarLocation {
                 label: "Archive".into(),
                 path: PathBuf::from("/tmp/archive"),
+                icon: None,
             },
         ];
 
@@ -1277,6 +1281,7 @@ mod tests {
                 vec![SidebarLocation {
                     label: "Other".into(),
                     path: PathBuf::from("/tmp/other"),
+                    icon: None,
                 }],
             )
             .unwrap();

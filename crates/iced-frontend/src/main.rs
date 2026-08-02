@@ -435,6 +435,7 @@ struct MountState {
 struct ContextEntry {
     path: PathBuf,
     is_directory: bool,
+    is_sidebar_location: bool,
     opener: Option<Result<String, String>>,
 }
 
@@ -727,6 +728,11 @@ enum Message {
     ShowEntryContext {
         path: PathBuf,
         is_directory: bool,
+    },
+    ShowSidebarLocationContext(PathBuf),
+    SetSidebarLocationIcon {
+        path: PathBuf,
+        icon: Option<String>,
     },
     FileOpenerResolved {
         path: PathBuf,
@@ -1583,6 +1589,7 @@ impl Gui {
                 self.context_entry = Some(ContextEntry {
                     path: path.clone(),
                     is_directory,
+                    is_sidebar_location: false,
                     opener: None,
                 });
                 self.context_position = self.pointer_position;
@@ -1596,6 +1603,20 @@ impl Gui {
                         }
                     })
                 }
+            }
+            Message::ShowSidebarLocationContext(path) => {
+                self.context_entry = Some(ContextEntry {
+                    path,
+                    is_directory: true,
+                    is_sidebar_location: true,
+                    opener: None,
+                });
+                self.context_position = self.pointer_position;
+                Task::none()
+            }
+            Message::SetSidebarLocationIcon { path, icon } => {
+                self.set_sidebar_location_icon(path, icon);
+                Task::none()
             }
             Message::FileOpenerResolved { path, opener } => {
                 if let Some(context_entry) = &mut self.context_entry
@@ -2805,7 +2826,21 @@ impl Gui {
             .and_then(|name| name.to_str())
             .map(str::to_owned)
             .unwrap_or_else(|| path.display().to_string());
-        locations.push(SidebarLocation { label, path });
+        locations.push(SidebarLocation {
+            label,
+            path,
+            icon: None,
+        });
+        self.save_sidebar_locations(locations);
+    }
+
+    fn set_sidebar_location_icon(&mut self, path: PathBuf, icon: Option<String>) {
+        let mut locations = self.active_sidebar_locations();
+        let Some(location) = locations.iter_mut().find(|location| location.path == path) else {
+            return;
+        };
+        location.icon = icon;
+        self.context_entry = None;
         self.save_sidebar_locations(locations);
     }
 
