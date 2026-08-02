@@ -11,6 +11,10 @@ Run
   run                      Start the default Iced frontend.
   run-gtk                  Start the GTK4 frontend.
   run-backend              Start the backend only.
+  pick-file [PATH]         Pick one file.
+  pick-files [PATH]        Pick multiple files.
+  pick-folder [PATH]       Pick one folder.
+  pick-folders [PATH]      Pick multiple folders.
   serve-docs               Serve the mdBook documentation locally.
 
 The Iced frontend accepts an optional location, for example `run ~/Documents`.

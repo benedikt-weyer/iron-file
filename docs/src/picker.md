@@ -36,3 +36,14 @@ iron-file-iced --mode picker --folder --single
 ```
 
 The type and cardinality flags apply only when picker mode is active.
+
+## Development Scripts
+
+The repository provides shortcuts for the four picker combinations:
+
+| Script | Picker mode |
+| --- | --- |
+| `pick-file [PATH]` | One file |
+| `pick-files [PATH]` | Multiple files |
+| `pick-folder [PATH]` | One folder |
+| `pick-folders [PATH]` | Multiple folders |
