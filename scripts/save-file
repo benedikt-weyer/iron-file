@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+
+set -eu
+
+name=${1:?usage: save-file NAME [PATH]}
+shift
+
+case "$name" in
+  '' | . | .. | */*)
+    printf '%s\n' 'save-file: NAME must be a simple file name' >&2
+    exit 2
+    ;;
+esac
+
+folder=$(cargo run --package iron-file-iced -- --mode picker --folder --single "$@")
+[ -n "$folder" ] || exit 1
+printf '%s/%s\n' "$folder" "$name"

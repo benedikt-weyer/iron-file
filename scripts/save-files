@@ -1,0 +1,30 @@
+#!/usr/bin/env sh
+
+set -eu
+
+[ "$#" -gt 0 ] || {
+  printf '%s\n' 'usage: save-files NAME [NAME ...] -- [PATH]' >&2
+  exit 2
+}
+
+names=
+while [ "$#" -gt 0 ] && [ "$1" != '--' ]; do
+  case "$1" in
+    '' | . | .. | */*)
+      printf '%s\n' 'save-files: names must be simple file names' >&2
+      exit 2
+      ;;
+  esac
+  names="${names}${names:+\n}$1"
+  shift
+done
+
+if [ "$#" -gt 0 ]; then
+  shift
+fi
+
+folder=$(cargo run --package iron-file-iced -- --mode picker --folder --single "$@")
+[ -n "$folder" ] || exit 1
+printf '%b\n' "$names" | while IFS= read -r name; do
+  printf '%s/%s\n' "$folder" "$name"
+done

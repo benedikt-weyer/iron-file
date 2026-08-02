@@ -1501,11 +1501,12 @@ impl Gui {
             .collect::<Vec<_>>();
         selected.sort();
         if selected.is_empty() {
-            self.status = match picker.kind {
-                PickerKind::File => "Select a file first".into(),
-                PickerKind::Folder => "Select a folder first".into(),
-            };
-            return Task::none();
+            if picker.kind == PickerKind::Folder {
+                selected.push(self.directory_path.clone());
+            } else {
+                self.status = "Select a file first".into();
+                return Task::none();
+            }
         }
         if !picker.multiple {
             selected.truncate(1);

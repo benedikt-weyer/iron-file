@@ -36,6 +36,8 @@ iron-file-iced --mode picker --folder --single
 ```
 
 The type and cardinality flags apply only when picker mode is active.
+For a folder picker, confirming without an explicit selection chooses the
+currently open folder.
 
 ## Development Scripts
 
@@ -47,3 +49,17 @@ The repository provides shortcuts for the four picker combinations:
 | `pick-files [PATH]` | Multiple files |
 | `pick-folder [PATH]` | One folder |
 | `pick-folders [PATH]` | Multiple folders |
+
+## Save Helpers
+
+The save helpers select one destination folder and print the resulting paths.
+They require simple file names, and reject directory separators and traversal
+names.
+
+```sh
+# Print one selected destination, such as /home/user/Documents/report.txt.
+save-file report.txt ~/Documents
+
+# Use -- to separate multiple names from an optional initial folder.
+save-files first.txt second.txt -- ~/Documents
+```

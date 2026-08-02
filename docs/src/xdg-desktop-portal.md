@@ -1,9 +1,15 @@
 # XDG Desktop Portal
 
 `xdg-desktop-portal-iron-file` implements
-`org.freedesktop.impl.portal.FileChooser.OpenFile`. It translates the portal
-options `directory` and `multiple` into Iron File picker flags and returns
-selected locations as normalized `file://` URIs.
+`org.freedesktop.impl.portal.FileChooser.OpenFile`, `SaveFile`, and
+`SaveFiles`. `OpenFile` translates the portal options `directory` and
+`multiple` into Iron File picker flags and returns selected locations as
+normalized `file://` URIs.
+
+For save requests, Iron File presents a single-folder picker. `SaveFile` joins
+that folder with the portal's `current_name`; `SaveFiles` joins it with every
+name in `files`, retaining their order. Names must be simple file names, so the
+backend does not accept path traversal or absolute paths from a portal caller.
 
 ## NixOS Package Contents
 

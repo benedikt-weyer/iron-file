@@ -15,6 +15,9 @@ Run
   pick-files [PATH]        Pick multiple files.
   pick-folder [PATH]       Pick one folder.
   pick-folders [PATH]      Pick multiple folders.
+  save-file NAME [PATH]    Pick a folder and print one save destination.
+  save-files NAME... -- [PATH]
+                           Pick a folder and print multiple save destinations.
   serve-docs               Serve the mdBook documentation locally.
 
 The Iced frontend accepts an optional location, for example `run ~/Documents`.
