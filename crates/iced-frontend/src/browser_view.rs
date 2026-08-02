@@ -928,6 +928,7 @@ impl Gui {
             const INFO_DIALOG_MAX_HEIGHT: f32 = 640.0;
             const INFO_DIALOG_CHROME_HEIGHT: f32 = 152.0;
             const INFO_ROW_HEIGHT: f32 = 28.0;
+            const INFO_THUMBNAIL_HEIGHT: f32 = 176.0;
             let info_header = || {
                 row![
                     text("Info").size(20),
@@ -944,6 +945,11 @@ impl Gui {
                 InfoDialog::Loading(_) => INFO_DIALOG_MIN_HEIGHT,
                 InfoDialog::Error { .. } => 220.0,
                 InfoDialog::Loaded(info) => (INFO_DIALOG_CHROME_HEIGHT
+                    + self
+                        .thumbnail_handles
+                        .contains_key(&info.path)
+                        .then_some(INFO_THUMBNAIL_HEIGHT)
+                        .unwrap_or_default()
                     + info.rows.len() as f32 * INFO_ROW_HEIGHT)
                     .clamp(INFO_DIALOG_MIN_HEIGHT, INFO_DIALOG_MAX_HEIGHT),
             };
@@ -961,6 +967,23 @@ impl Gui {
                 .into(),
                 InfoDialog::Loaded(info) => {
                     let rows_height = info.rows.len() as f32 * INFO_ROW_HEIGHT;
+                    let thumbnail: Option<Element<'_, Message>> =
+                        self.thumbnail_handles.get(&info.path).map(|handle| {
+                            container(
+                                image(handle.clone())
+                                    .width(Length::Fixed(160.0))
+                                    .height(Length::Fixed(160.0)),
+                            )
+                            .width(Length::Fill)
+                            .center_x(Length::Fill)
+                            .into()
+                        });
+                    let max_details_height = INFO_DIALOG_MAX_HEIGHT
+                        - INFO_DIALOG_CHROME_HEIGHT
+                        - thumbnail
+                            .as_ref()
+                            .map(|_| INFO_THUMBNAIL_HEIGHT)
+                            .unwrap_or_default();
                     let rows =
                         info.rows
                             .iter()
@@ -973,17 +996,18 @@ impl Gui {
                                     .spacing(12),
                                 )
                             });
-                    let details: Element<'_, Message> =
-                        if rows_height > INFO_DIALOG_MAX_HEIGHT - INFO_DIALOG_CHROME_HEIGHT {
-                            scrollable(rows)
-                                .height(Length::Fixed(
-                                    INFO_DIALOG_MAX_HEIGHT - INFO_DIALOG_CHROME_HEIGHT,
-                                ))
-                                .into()
-                        } else {
-                            rows.into()
-                        };
-                    container(column![info_header(), text(&info.name), details,].spacing(12))
+                    let details: Element<'_, Message> = if rows_height > max_details_height {
+                        scrollable(rows)
+                            .height(Length::Fixed(max_details_height))
+                            .into()
+                    } else {
+                        rows.into()
+                    };
+                    let content = column![info_header(), text(&info.name)]
+                        .push_maybe(thumbnail)
+                        .push(details)
+                        .spacing(12);
+                    container(content)
                         .width(Length::Fixed(INFO_DIALOG_WIDTH))
                         .padding(16)
                         .into()

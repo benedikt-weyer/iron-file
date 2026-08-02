@@ -435,6 +435,7 @@ enum InfoDialog {
 
 #[derive(Debug, Clone)]
 struct EntryInfo {
+    path: PathBuf,
     name: String,
     rows: Vec<(String, String)>,
 }
@@ -1573,6 +1574,7 @@ impl Gui {
                 }
                 self.pending_info = Some(match result {
                     Ok(info) => InfoDialog::Loaded(EntryInfo {
+                        path: path.clone(),
                         name: info.name,
                         rows: info
                             .fields
