@@ -296,6 +296,30 @@ impl QuickToolbarItem {
     ];
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum KeyboardShortcutAction {
+    RenameSelection,
+}
+
+impl KeyboardShortcutAction {
+    pub const ALL: [Self; 1] = [Self::RenameSelection];
+}
+
+impl fmt::Display for KeyboardShortcutAction {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::RenameSelection => "Rename selected entry",
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyboardShortcut {
+    pub action: KeyboardShortcutAction,
+    pub key: String,
+}
+
 impl fmt::Display for QuickToolbarItem {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
@@ -330,6 +354,8 @@ pub struct BrowserSettings {
     pub folder_context_menu_items: Vec<ContextMenuItem>,
     #[serde(default = "default_quick_toolbar_items")]
     pub quick_toolbar_items: Vec<QuickToolbarItem>,
+    #[serde(default = "default_keyboard_shortcuts")]
+    pub keyboard_shortcuts: Vec<KeyboardShortcut>,
     #[serde(default, rename = "context_menu_items", skip_serializing)]
     legacy_context_menu_items: Option<Vec<ContextMenuItem>>,
 }
@@ -754,6 +780,13 @@ fn default_folder_context_menu_items() -> Vec<ContextMenuItem> {
 
 fn default_quick_toolbar_items() -> Vec<QuickToolbarItem> {
     QuickToolbarItem::ALL.to_vec()
+}
+
+fn default_keyboard_shortcuts() -> Vec<KeyboardShortcut> {
+    vec![KeyboardShortcut {
+        action: KeyboardShortcutAction::RenameSelection,
+        key: "F2".into(),
+    }]
 }
 
 impl BrowserSettings {

@@ -36,3 +36,7 @@ apply to the selected file or folder are hidden automatically. The legacy
 The `[browser]` `quick_toolbar_items` array controls the visible quick-toolbar
 actions and their order. Available values are `"toggle-hidden-files"`,
 `"compress-selection"`, and `"extract-selection"`.
+
+The `[browser]` `keyboard_shortcuts` array maps actions to keys. Its default
+binding is `{ action = "rename-selection", key = "F2" }`. Set `key` to an
+empty string to disable an action.

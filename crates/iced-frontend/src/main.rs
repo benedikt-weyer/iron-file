@@ -30,7 +30,7 @@ use iron_file_common::{
     browse_with_thumbnails, compress_entries,
     config::{
         BrowserLayout, BrowserSettings, ColorMode, ConfigStore, ContextMenuBlurKernelSize,
-        ContextMenuItem, Profile, QuickToolbarItem, SidebarLocation,
+        ContextMenuItem, KeyboardShortcutAction, Profile, QuickToolbarItem, SidebarLocation,
     },
     copy_entries, create_entry, create_symlinks, create_thumbnail, delete_entries, ensure_backend,
     extract_archives, pipe_backend_logs, proto, rename_entry, restart_backend, stream_directory,
@@ -42,6 +42,14 @@ use tokio::runtime::Runtime;
 const DETACHED_ENV: &str = "IRON_FILE_DETACHED";
 const NAVIGATION_CONTROL_HEIGHT: f32 = 32.0;
 static BORDER_RADIUS: AtomicU8 = AtomicU8::new(6);
+
+fn shortcut_key_name(key: &keyboard::Key) -> Option<String> {
+    match key.as_ref() {
+        keyboard::Key::Named(key) => Some(format!("{key:?}")),
+        keyboard::Key::Character(key) if !key.is_empty() => Some(key.to_uppercase()),
+        keyboard::Key::Character(_) | keyboard::Key::Unidentified => None,
+    }
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut startup = startup_options();
@@ -434,6 +442,7 @@ enum HistoryRequest {
 #[derive(Debug, Clone)]
 enum BrowserCommand {
     CopySelection,
+    RenameSelection,
     CopyLocation(PathBuf),
     Paste,
     DeleteSelection,
@@ -487,6 +496,7 @@ enum PreferenceOption {
     FileContextMenuItems,
     FolderContextMenuItems,
     QuickToolbarItems,
+    KeyboardShortcuts,
     BorderRadius,
     Layout,
     ItemSize,
@@ -574,6 +584,11 @@ enum Message {
     },
     QuickToolbarItemToggled(QuickToolbarItem, bool),
     MoveQuickToolbarItem(QuickToolbarItem, bool),
+    KeyboardShortcutChanged {
+        action: KeyboardShortcutAction,
+        key: String,
+    },
+    ShortcutPressed(String),
     BorderRadiusChanged(u8),
     OpenAccentPicker(bool),
     AccentHueChanged(u16),
@@ -685,6 +700,9 @@ impl Gui {
                 Some(Message::ExecuteBrowserCommand(
                     BrowserCommand::DeleteSelection,
                 ))
+            }
+            iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
+                shortcut_key_name(&key).map(Message::ShortcutPressed)
             }
             _ => None,
         })
@@ -1178,6 +1196,24 @@ impl Gui {
                 }
                 Task::none()
             }
+            Message::KeyboardShortcutChanged { action, key } => {
+                self.save_keyboard_shortcut(action, key);
+                Task::none()
+            }
+            Message::ShortcutPressed(key) => {
+                let action = self
+                    .active_browser_settings()
+                    .keyboard_shortcuts
+                    .into_iter()
+                    .find(|shortcut| shortcut.key.eq_ignore_ascii_case(&key))
+                    .map(|shortcut| shortcut.action);
+                match action {
+                    Some(KeyboardShortcutAction::RenameSelection) => {
+                        self.execute_browser_command(BrowserCommand::RenameSelection)
+                    }
+                    None => Task::none(),
+                }
+            }
             Message::BorderRadiusChanged(radius) => {
                 self.save_border_radius(radius);
                 Task::none()
@@ -1653,6 +1689,9 @@ impl Gui {
             PreferenceOption::QuickToolbarItems => {
                 browser.quick_toolbar_items == browser_defaults.quick_toolbar_items
             }
+            PreferenceOption::KeyboardShortcuts => {
+                browser.keyboard_shortcuts == browser_defaults.keyboard_shortcuts
+            }
         }
     }
 
@@ -1882,6 +1921,19 @@ impl Gui {
                     self.status = format!("Copied {count} item(s) to the clipboard");
                 }
                 Task::none()
+            }
+            BrowserCommand::RenameSelection => {
+                if self.selected_entries.len() != 1 {
+                    self.status = "Select exactly one file or folder to rename".into();
+                    return Task::none();
+                }
+                let path = self
+                    .selected_entries
+                    .iter()
+                    .next()
+                    .cloned()
+                    .unwrap_or_default();
+                self.update(Message::RequestRenameEntry(path))
             }
             BrowserCommand::CopyLocation(path) => {
                 self.context_entry = None;
@@ -2130,7 +2182,8 @@ impl Gui {
             | PreferenceOption::Terminal
             | PreferenceOption::FileContextMenuItems
             | PreferenceOption::FolderContextMenuItems
-            | PreferenceOption::QuickToolbarItems => {
+            | PreferenceOption::QuickToolbarItems
+            | PreferenceOption::KeyboardShortcuts => {
                 let mut browser = self.active_browser_settings();
                 match option {
                     PreferenceOption::Layout => browser.layout = defaults.layout,
@@ -2154,6 +2207,9 @@ impl Gui {
                     }
                     PreferenceOption::QuickToolbarItems => {
                         browser.quick_toolbar_items = defaults.quick_toolbar_items
+                    }
+                    PreferenceOption::KeyboardShortcuts => {
+                        browser.keyboard_shortcuts = defaults.keyboard_shortcuts
                     }
                     _ => unreachable!(),
                 }
@@ -2289,6 +2345,20 @@ impl Gui {
         };
         let mut browser = profile.browser.clone();
         browser.quick_toolbar_items = items;
+        self.save_browser_settings(browser);
+    }
+
+    fn save_keyboard_shortcut(&mut self, action: KeyboardShortcutAction, key: String) {
+        let mut browser = self.active_browser_settings();
+        browser
+            .keyboard_shortcuts
+            .retain(|shortcut| shortcut.action != action);
+        let key = key.trim().to_owned();
+        if !key.is_empty() {
+            browser
+                .keyboard_shortcuts
+                .push(iron_file_common::config::KeyboardShortcut { action, key });
+        }
         self.save_browser_settings(browser);
     }
 
@@ -3924,6 +3994,29 @@ impl Gui {
                 )
             },
         );
+        let keyboard_shortcut_options =
+            KeyboardShortcutAction::ALL
+                .into_iter()
+                .fold(column![].spacing(6), |column, action| {
+                    let key = browser
+                        .keyboard_shortcuts
+                        .iter()
+                        .find(|shortcut| shortcut.action == action)
+                        .map(|shortcut| shortcut.key.as_str())
+                        .unwrap_or_default();
+                    column.push(
+                        row![
+                            text(action.to_string()).width(Length::Fill),
+                            text_input("Key", key)
+                                .on_input(move |key| Message::KeyboardShortcutChanged {
+                                    action,
+                                    key
+                                })
+                                .width(Length::Fixed(120.0)),
+                        ]
+                        .spacing(10),
+                    )
+                });
         let profiles = self
             .profiles
             .iter()
@@ -4049,6 +4142,15 @@ impl Gui {
                 ]
                 .spacing(10),
                 column![text("Browser").size(18), browser_options].spacing(10),
+                column![
+                    row![
+                        text("Keyboard shortcuts").size(18),
+                        self.preference_reset_button(PreferenceOption::KeyboardShortcuts),
+                    ]
+                    .spacing(8),
+                    keyboard_shortcut_options,
+                ]
+                .spacing(10),
                 column![
                     row![
                         text("File context menu").size(18),

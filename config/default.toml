@@ -45,6 +45,9 @@ quick_toolbar_items = [
   "compress-selection",
   "extract-selection",
 ]
+keyboard_shortcuts = [
+  { action = "rename-selection", key = "F2" },
+]
 
 [[sidebar_locations]]
 label = "Home"
