@@ -241,6 +241,18 @@ fn detach() -> std::io::Result<()> {
         .map(|_| ())
 }
 
+fn clone_window(path: &Path) -> Result<(), String> {
+    Command::new(env::current_exe().map_err(|error| error.to_string())?)
+        .arg(path)
+        .env(DETACHED_ENV, "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Could not open a new window: {error}"))
+}
+
 #[cfg(test)]
 mod startup_tests {
     use super::*;
@@ -749,6 +761,7 @@ enum Message {
     SaveFileNameChanged(String),
     ResetSaveFileName,
     RefreshDirectory,
+    CloneWindow,
     CloseWindow(Option<window::Id>),
     RestartBackend,
     BackendRestarted(Result<(), String>),
@@ -1031,6 +1044,13 @@ impl Gui {
                 Task::none()
             }
             Message::RefreshDirectory => self.refresh_directory(),
+            Message::CloneWindow => {
+                self.status = match clone_window(&self.directory_path) {
+                    Ok(()) => "Opened new window".into(),
+                    Err(error) => error,
+                };
+                Task::none()
+            }
             Message::CloseWindow(Some(id)) => window::close(id),
             Message::CloseWindow(None) => Task::none(),
             Message::ExecuteBrowserCommand(command) => self.execute_browser_command(command),

@@ -34,7 +34,8 @@ apply to the selected file or folder are hidden automatically. The legacy
 `context_menu_items` setting is read as the initial list for both menus.
 
 The `[browser]` `quick_toolbar_items` array controls the visible quick-toolbar
-actions and their order. Available values are `"refresh"`, `"toggle-hidden-files"`,
+actions and their order. Available values are `"refresh"`, `"clone-window"`,
+`"toggle-hidden-files"`,
 `"sort"`, `"folder-sort"`, `"compress-selection"`, and `"extract-selection"`. The
 `sort_order` setting selects `"name-ascending"`, `"name-descending"`,
 `"modified-newest"`, `"modified-oldest"`, `"created-newest"`, or

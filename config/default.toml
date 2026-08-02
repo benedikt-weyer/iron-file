@@ -48,6 +48,7 @@ folder_context_menu_items = [
 ]
 quick_toolbar_items = [
   "refresh",
+  "clone-window",
   "toggle-hidden-files",
   "sort",
   "folder-sort",

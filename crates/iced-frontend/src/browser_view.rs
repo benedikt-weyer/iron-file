@@ -238,6 +238,12 @@ impl Gui {
                     tooltip::Position::Bottom,
                 )
                 .into(),
+                QuickToolbarItem::CloneWindow => tooltip(
+                    button(icon_text("copy")).on_press(Message::CloneWindow),
+                    text("Open new window"),
+                    tooltip::Position::Bottom,
+                )
+                .into(),
                 QuickToolbarItem::ToggleHiddenFiles => tooltip(
                     button(icon_text(if browser_settings.show_hidden_files {
                         "eye-off"
