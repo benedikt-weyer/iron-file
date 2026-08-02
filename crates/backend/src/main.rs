@@ -1,13 +1,13 @@
 use std::{
     fs::{File, OpenOptions},
-    io::{self, BufWriter},
+    io::{self, BufWriter, Cursor},
     path::{Path, PathBuf},
     pin::Pin,
     time::{Duration, SystemTime},
 };
 
 use fs2::FileExt;
-use image::{ImageFormat, ImageReader};
+use image::{DynamicImage, ImageFormat, ImageReader};
 use iron_file_common::{backend_lock_path, proto, socket_path};
 use sha1::{Digest, Sha1};
 use tokio::{
@@ -870,14 +870,40 @@ fn thumbnail_for(path: &Path, directory: &Path) -> Result<ThumbnailOutcome, Stri
         return Ok(ThumbnailOutcome::Cached(thumbnail_path));
     }
 
-    let reader = match ImageReader::open(path).and_then(|reader| reader.with_guessed_format()) {
-        Ok(reader) => reader,
-        Err(_) => return Ok(ThumbnailOutcome::NotImage),
+    let image = image_from_path(path).or_else(|| audio_cover_image(path));
+    let Some(image) = image else {
+        return Ok(ThumbnailOutcome::NotImage);
     };
-    let image = match reader.decode() {
-        Ok(image) => image,
-        Err(_) => return Ok(ThumbnailOutcome::NotImage),
-    };
+    write_thumbnail(image, &thumbnail_path)?;
+    Ok(ThumbnailOutcome::Generated(thumbnail_path))
+}
+
+fn image_from_path(path: &Path) -> Option<DynamicImage> {
+    let reader = ImageReader::open(path).ok()?.with_guessed_format().ok()?;
+    reader.decode().ok()
+}
+
+fn audio_cover_image(path: &Path) -> Option<DynamicImage> {
+    use lofty::{file::TaggedFileExt, picture::PictureType};
+
+    let audio = lofty::read_from_path(path).ok()?;
+    let picture = audio
+        .tags()
+        .iter()
+        .flat_map(|tag| tag.pictures())
+        .find(|picture| picture.pic_type() == PictureType::CoverFront)
+        .or_else(|| audio.tags().iter().flat_map(|tag| tag.pictures()).next())?;
+    ImageReader::new(Cursor::new(picture.data()))
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()
+}
+
+fn write_thumbnail(image: DynamicImage, thumbnail_path: &Path) -> Result<(), String> {
+    let directory = thumbnail_path
+        .parent()
+        .ok_or_else(|| format!("{} has no parent directory", thumbnail_path.display()))?;
     std::fs::create_dir_all(directory)
         .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
     let temporary_path = thumbnail_path.with_extension("tmp");
@@ -893,8 +919,7 @@ fn thumbnail_for(path: &Path, directory: &Path) -> Result<ThumbnailOutcome, Stri
             temporary_path.display(),
             thumbnail_path.display()
         )
-    })?;
-    Ok(ThumbnailOutcome::Generated(thumbnail_path))
+    })
 }
 
 fn thumbnail_filename(path: &Path) -> String {
