@@ -428,6 +428,11 @@ impl Gui {
             .width(Length::Fill)
         });
         address_bar = address_bar.push(tooltip(
+            button(icon_text("square-plus")).on_press(Message::CloneWindow),
+            text(String::from("Open this folder in a new window")),
+            tooltip::Position::Bottom,
+        ));
+        address_bar = address_bar.push(tooltip(
             button(icon_text("settings")).on_press(Message::ShowPreferences),
             text(String::from("Preferences")),
             tooltip::Position::Bottom,
