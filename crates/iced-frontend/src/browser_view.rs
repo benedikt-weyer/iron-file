@@ -179,7 +179,10 @@ impl Gui {
                 let tile_width = f32::from(browser_settings.item_size) * 3.5;
                 let tile_icon_size = browser_settings.item_size.saturating_mul(9) / 5;
                 let tile_name_line_characters = (tile_width / 8.0).floor().max(8.0) as usize;
-                let columns = (size.width / tile_width).floor().max(1.0) as usize;
+                let tile_spacing = 8.0;
+                let columns = ((size.width + tile_spacing) / (tile_width + tile_spacing))
+                    .floor()
+                    .max(1.0) as usize;
                 tile_columns.set(columns);
                 let tiles =
                     visible_entries
