@@ -47,6 +47,7 @@ use tokio::runtime::Runtime;
 
 const DETACHED_ENV: &str = "IRON_FILE_DETACHED";
 const NAVIGATION_CONTROL_HEIGHT: f32 = 32.0;
+const DRAG_START_THRESHOLD: f32 = 5.0;
 static BORDER_RADIUS: AtomicU8 = AtomicU8::new(6);
 
 fn shortcut_key_name(key: &keyboard::Key) -> Option<String> {
@@ -385,6 +386,7 @@ struct Gui {
     sidebar_drop_target: Option<PathBuf>,
     sidebar_drop_at_end: bool,
     dragging_entries: Option<Vec<PathBuf>>,
+    pending_drag: Option<(Point, Vec<PathBuf>)>,
     entry_drop_target: Option<PathBuf>,
     hovered_entry: Option<(PathBuf, bool)>,
     window_cursor_position: Point,
@@ -1049,6 +1051,7 @@ impl Gui {
             sidebar_drop_target: None,
             sidebar_drop_at_end: false,
             dragging_entries: None,
+            pending_drag: None,
             entry_drop_target: None,
             hovered_entry: None,
             window_cursor_position: Point::ORIGIN,
@@ -1170,6 +1173,7 @@ impl Gui {
             Message::FinishRectangleSelection => {
                 self.rectangle_selection = None;
                 self.dragging_entries = None;
+                self.pending_drag = None;
                 self.entry_drop_target = None;
                 Task::none()
             }
@@ -1197,16 +1201,18 @@ impl Gui {
             Message::LeftMouseButtonPressed => {
                 if self.view == View::Browser && !self.editing_address {
                     if let Some((path, _)) = self.hovered_entry.clone() {
-                        self.dragging_entries = Some(if self.selected_entries.contains(&path) {
+                        let entries = if self.selected_entries.contains(&path) {
                             self.selected_entries.iter().cloned().collect()
                         } else {
                             vec![path]
-                        });
+                        };
+                        self.pending_drag = Some((self.window_cursor_position, entries));
                     }
                 }
                 Task::none()
             }
             Message::LeftMouseButtonReleased => {
+                self.pending_drag = None;
                 if let Some(target) = self.entry_drop_target.take() {
                     return self.drop_dragged_entries(target);
                 }
@@ -1215,6 +1221,13 @@ impl Gui {
             }
             Message::WindowCursorMoved(position) => {
                 self.window_cursor_position = position;
+                if let Some((start, entries)) = &self.pending_drag {
+                    let delta = *start - position;
+                    if delta.x.hypot(delta.y) > DRAG_START_THRESHOLD {
+                        self.dragging_entries = Some(entries.clone());
+                        self.pending_drag = None;
+                    }
+                }
                 Task::none()
             }
             Message::ConfirmPicker => self.confirm_picker(),
