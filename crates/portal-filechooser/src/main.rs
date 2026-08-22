@@ -15,12 +15,18 @@ use zbus::{
 
 const BUS_NAME: &str = "org.freedesktop.impl.portal.desktop.iron-file";
 const OBJECT_PATH: &str = "/org/freedesktop/portal/desktop";
+const FILE_MANAGER_BUS_NAME: &str = "org.freedesktop.FileManager1";
+const FILE_MANAGER_OBJECT_PATH: &str = "/org/freedesktop/FileManager1";
 
 struct FileChooser {
     executable: PathBuf,
 }
 
 struct OpenUri {
+    executable: PathBuf,
+}
+
+struct FileManager1 {
     executable: PathBuf,
 }
 
@@ -62,6 +68,37 @@ impl OpenUri {
         };
         launch_file_manager(&self.executable, &directory).await?;
         Ok((0, HashMap::new()))
+    }
+}
+
+#[zbus::interface(name = "org.freedesktop.FileManager1")]
+impl FileManager1 {
+    async fn show_folders(&self, uris: Vec<String>, _startup_id: String) -> fdo::Result<()> {
+        for directory in unique(paths_from_uris(&uris)) {
+            launch_file_manager(&self.executable, &directory).await?;
+        }
+        Ok(())
+    }
+
+    async fn show_items(&self, uris: Vec<String>, _startup_id: String) -> fdo::Result<()> {
+        let directories = paths_from_uris(&uris)
+            .into_iter()
+            .map(|path| parent_directory(&path))
+            .collect::<Vec<_>>();
+        for directory in unique(directories) {
+            launch_file_manager(&self.executable, &directory).await?;
+        }
+        Ok(())
+    }
+
+    // Iron File has no item-properties dialog, so this opens the containing
+    // folder as a best-effort fallback rather than failing the request.
+    async fn show_item_properties(
+        &self,
+        uris: Vec<String>,
+        _startup_id: String,
+    ) -> fdo::Result<()> {
+        self.show_items(uris, _startup_id).await
     }
 }
 
@@ -174,6 +211,31 @@ async fn launch_associated_application(path: &Path) -> fdo::Result<()> {
         .map_err(|error| fdo::Error::Failed(format!("could not open file: {error}")))
 }
 
+fn paths_from_uris(uris: &[String]) -> Vec<PathBuf> {
+    uris.iter()
+        .filter_map(|uri| Url::parse(uri).ok())
+        .filter_map(|url| url.to_file_path().ok())
+        .collect()
+}
+
+fn parent_directory(path: &Path) -> PathBuf {
+    if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| path.to_path_buf())
+    }
+}
+
+fn unique(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen = std::collections::HashSet::new();
+    paths
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
+}
+
 async fn launch_file_manager(executable: &Path, directory: &Path) -> fdo::Result<()> {
     Command::new(executable)
         .arg(directory)
@@ -232,7 +294,7 @@ fn valid_file_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{path_from_fd, valid_file_name};
+    use super::{parent_directory, path_from_fd, paths_from_uris, unique, valid_file_name};
     use std::{fs::File, os::fd::OwnedFd, path::PathBuf};
     use zbus::zvariant::OwnedFd as ZbusOwnedFd;
 
@@ -252,6 +314,42 @@ mod tests {
 
         assert_eq!(path_from_fd(&fd).unwrap(), PathBuf::from("/dev/null"));
     }
+
+    #[test]
+    fn resolves_paths_from_file_uris_and_ignores_others() {
+        let paths = paths_from_uris(&[
+            "file:///dev/null".to_owned(),
+            "not a uri".to_owned(),
+            "http://example.com/file".to_owned(),
+        ]);
+        assert_eq!(paths, vec![PathBuf::from("/dev/null")]);
+    }
+
+    #[test]
+    fn parent_directory_of_a_file_is_its_parent() {
+        assert_eq!(
+            parent_directory(&PathBuf::from("/dev/null")),
+            PathBuf::from("/dev")
+        );
+    }
+
+    #[test]
+    fn parent_directory_of_a_directory_is_itself() {
+        assert_eq!(
+            parent_directory(&PathBuf::from("/dev")),
+            PathBuf::from("/dev")
+        );
+    }
+
+    #[test]
+    fn unique_removes_duplicate_paths_preserving_order() {
+        let paths = unique(vec![
+            PathBuf::from("/a"),
+            PathBuf::from("/b"),
+            PathBuf::from("/a"),
+        ]);
+        assert_eq!(paths, vec![PathBuf::from("/a"), PathBuf::from("/b")]);
+    }
 }
 
 fn option_bool(options: &HashMap<String, OwnedValue>, key: &str) -> bool {
@@ -266,7 +364,7 @@ async fn main() -> zbus::Result<()> {
     let executable = env::var_os("IRON_FILE_BIN")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("iron-file-iced"));
-    let _connection = zbus::ConnectionBuilder::session()?
+    let connection = zbus::ConnectionBuilder::session()?
         .name(BUS_NAME)?
         .serve_at(
             OBJECT_PATH,
@@ -274,9 +372,21 @@ async fn main() -> zbus::Result<()> {
                 executable: executable.clone(),
             },
         )?
-        .serve_at(OBJECT_PATH, OpenUri { executable })?
+        .serve_at(
+            OBJECT_PATH,
+            OpenUri {
+                executable: executable.clone(),
+            },
+        )?
+        .serve_at(FILE_MANAGER_OBJECT_PATH, FileManager1 { executable })?
         .build()
         .await?;
+
+    // Best-effort: another file manager (e.g. Nautilus) may already own this
+    // name, in which case the portal backend above still starts normally.
+    if let Err(error) = connection.request_name(FILE_MANAGER_BUS_NAME).await {
+        eprintln!("could not acquire {FILE_MANAGER_BUS_NAME}: {error}");
+    }
     std::future::pending::<()>().await;
     Ok(())
 }

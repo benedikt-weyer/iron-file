@@ -18,6 +18,16 @@ OpenURI `OpenFile` opens the descriptor's resolved path with its associated
 desktop application. `OpenDirectory` opens Iron File at the target directory,
 or at a file's parent directory.
 
+`xdg-desktop-portal-iron-file` also owns the well-known bus name
+`org.freedesktop.FileManager1` (best-effort: if another file manager already
+owns it, the request is skipped and the portal backend still starts) and
+implements its `ShowFolders`, `ShowItems`, and `ShowItemProperties` methods.
+All three take a list of `file://` URIs and open Iron File at the
+corresponding directories, de-duplicated; `ShowItems` and
+`ShowItemProperties` resolve each URI to its containing folder first. Iron
+File has no item-properties dialog, so `ShowItemProperties` is handled
+identically to `ShowItems` as a best-effort fallback rather than erroring.
+
 ## NixOS Package Contents
 
 The custom Iron File Nix package installs the portal executable, its
