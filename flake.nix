@@ -36,5 +36,14 @@
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibraries;
           };
         });
+
+      packages = forAllSystems (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in {
+          iron-file = pkgs.callPackage ./nix/iron-file.nix { inherit self; };
+          iron-file-gtk = pkgs.callPackage ./nix/iron-file-gtk.nix { inherit self; };
+          default = self.packages.${system}.iron-file;
+        });
     };
 }
