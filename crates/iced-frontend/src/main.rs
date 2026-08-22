@@ -551,6 +551,7 @@ enum HistoryRequest {
 enum BrowserCommand {
     CopySelection,
     CutSelection,
+    CancelCut,
     RenameSelection,
     CopyLocation(PathBuf),
     Paste,
@@ -2699,6 +2700,16 @@ impl Gui {
                     });
                     self.context_entry = None;
                     self.status = format!("Cut {count} item(s) to the clipboard");
+                }
+                Task::none()
+            }
+            BrowserCommand::CancelCut => {
+                if matches!(
+                    self.paste_buffer.as_ref().map(|buffer| buffer.mode),
+                    Some(PasteMode::Move)
+                ) {
+                    self.paste_buffer = None;
+                    self.status = "Cut cancelled".into();
                 }
                 Task::none()
             }

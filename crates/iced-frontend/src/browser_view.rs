@@ -311,6 +311,17 @@ impl Gui {
             };
             quick_toolbar_actions = quick_toolbar_actions.push(action);
         }
+        if matches!(
+            self.paste_buffer.as_ref().map(|buffer| buffer.mode),
+            Some(PasteMode::Move)
+        ) {
+            quick_toolbar_actions = quick_toolbar_actions.push(tooltip(
+                button(icon_text("clipboard-x"))
+                    .on_press(Message::ExecuteBrowserCommand(BrowserCommand::CancelCut)),
+                text("Cancel cut"),
+                tooltip::Position::Bottom,
+            ));
+        }
         let quick_actions = container(quick_toolbar_actions)
             .width(Length::Fill)
             .padding([3, 6])
