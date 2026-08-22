@@ -1,16 +1,6 @@
 use super::*;
-use iced::widget::text::Wrapping;
+use iced::widget::text::{Shaping, Wrapping};
 use iced::widget::{column, row, stack};
-
-fn name_label_lines(name: &str, line_characters: usize, max_lines: usize) -> Vec<String> {
-    let max_characters = line_characters.saturating_mul(max_lines);
-    let label = truncate_label(name, max_characters);
-    let characters = label.chars().collect::<Vec<_>>();
-    characters
-        .chunks(line_characters.max(1))
-        .map(|line| line.iter().collect())
-        .collect()
-}
 
 fn name_prompt_dialog<'a>(
     title: String,
@@ -79,6 +69,7 @@ fn name_label(
     ))
     .width(Length::Fill)
     .wrapping(Wrapping::Glyph)
+    .shaping(Shaping::Advanced)
     .align_x(alignment)
     .into()
 }
@@ -194,22 +185,6 @@ impl Gui {
                     visible_entries
                         .chunks(columns)
                         .fold(column![].spacing(8), |column, chunk| {
-                            let max_tile_name_lines = chunk
-                                .iter()
-                                .map(|entry| {
-                                    name_label_lines(
-                                        &entry.name,
-                                        tile_name_line_characters,
-                                        max_name_lines,
-                                    )
-                                    .len()
-                                })
-                                .max()
-                                .unwrap_or(1);
-                            let tile_height = f32::from(tile_icon_size)
-                                + 6.0
-                                + 20.0 * max_tile_name_lines as f32
-                                + 10.0;
                             let tiles = chunk.iter().fold(row![].spacing(8), |row, entry| {
                                 let path = PathBuf::from(&entry.path);
                                 let is_selected = self.selected_entries.contains(&path);
@@ -232,15 +207,12 @@ impl Gui {
                                     .align_x(iced::alignment::Horizontal::Center),
                                 )
                                 .width(Length::Fill)
-                                .height(Length::Fill)
-                                .center_x(Length::Fill)
-                                .align_y(iced::alignment::Vertical::Top);
+                                .center_x(Length::Fill);
                                 let tile = button(tile_content)
                                     .style(move |theme, status| {
                                         file_item_button_style(theme, status, is_selected)
                                     })
                                     .width(Length::Fixed(tile_width))
-                                    .height(Length::Fixed(tile_height))
                                     .on_press(Message::EntryClicked {
                                         path: path.clone(),
                                         is_directory: entry.is_directory,
