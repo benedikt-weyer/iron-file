@@ -48,31 +48,54 @@ impl Gui {
             let path = PathBuf::from(&entry.path);
             let is_selected = self.selected_entries.contains(&path);
             if entry.is_directory {
-                column.push(
-                    mouse_area(
-                        button(
-                            row![
-                                icon,
-                                name_label(&entry.name, 80, max_name_lines, 20.0, name_alignment,)
-                            ]
-                            .spacing(8)
-                            .align_y(iced::alignment::Vertical::Top),
-                        )
-                        .style(move |theme, status| {
-                            file_item_button_style(theme, status, is_selected)
-                        })
-                        .width(Length::Fill)
-                        .on_press(Message::EntryClicked {
-                            path: path.clone(),
-                            is_directory: true,
-                        }),
+                let is_drop_target = self.dragging_entries.is_some()
+                    && self.entry_drop_target.as_ref() == Some(&path);
+                let row_item = mouse_area(
+                    button(
+                        row![
+                            icon,
+                            name_label(&entry.name, 80, max_name_lines, 20.0, name_alignment,)
+                        ]
+                        .spacing(8)
+                        .align_y(iced::alignment::Vertical::Top),
                     )
-                    .on_right_press(Message::ShowEntryContext {
+                    .style(move |theme, status| file_item_button_style(theme, status, is_selected))
+                    .width(Length::Fill)
+                    .on_press(Message::EntryClicked {
                         path: path.clone(),
                         is_directory: true,
-                    })
-                    .interaction(mouse::Interaction::Pointer),
+                    }),
                 )
+                .on_right_press(Message::ShowEntryContext {
+                    path: path.clone(),
+                    is_directory: true,
+                })
+                .on_enter(Message::EntryHovered {
+                    path: path.clone(),
+                    is_directory: true,
+                })
+                .on_exit(Message::EntryUnhovered(path.clone()))
+                .interaction(mouse::Interaction::Pointer);
+                let row_item: Element<'_, Message> = if is_drop_target {
+                    stack![
+                        row_item,
+                        container(Space::new().width(Length::Fill).height(Length::Fill))
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .style(|theme: &Theme| {
+                                iced::widget::container::Style::default().border(Border {
+                                    color: theme.palette().primary,
+                                    width: 2.0,
+                                    radius: border_radius().into(),
+                                })
+                            }),
+                    ]
+                    .width(Length::Fill)
+                    .into()
+                } else {
+                    row_item.into()
+                };
+                column.push(row_item)
             } else {
                 column.push(
                     mouse_area(
@@ -94,9 +117,14 @@ impl Gui {
                         }),
                     )
                     .on_right_press(Message::ShowEntryContext {
-                        path,
+                        path: path.clone(),
                         is_directory: false,
-                    }),
+                    })
+                    .on_enter(Message::EntryHovered {
+                        path: path.clone(),
+                        is_directory: false,
+                    })
+                    .on_exit(Message::EntryUnhovered(path)),
                 )
             }
         });
@@ -131,6 +159,9 @@ impl Gui {
                             let tiles = chunk.iter().fold(row![].spacing(8), |row, entry| {
                                 let path = PathBuf::from(&entry.path);
                                 let is_selected = self.selected_entries.contains(&path);
+                                let is_drop_target = entry.is_directory
+                                    && self.dragging_entries.is_some()
+                                    && self.entry_drop_target.as_ref() == Some(&path);
                                 let icon = self.entry_icon(entry, tile_icon_size);
                                 let tile_content = container(
                                     column![
@@ -160,14 +191,35 @@ impl Gui {
                                         path: path.clone(),
                                         is_directory: entry.is_directory,
                                     });
-                                row.push(
-                                    mouse_area(tile)
-                                        .on_right_press(Message::ShowEntryContext {
-                                            path,
-                                            is_directory: entry.is_directory,
+                                let is_directory = entry.is_directory;
+                                let tile: Element<'_, Message> = mouse_area(tile)
+                                    .on_right_press(Message::ShowEntryContext {
+                                        path: path.clone(),
+                                        is_directory,
+                                    })
+                                    .on_enter(Message::EntryHovered {
+                                        path: path.clone(),
+                                        is_directory,
+                                    })
+                                    .on_exit(Message::EntryUnhovered(path))
+                                    .interaction(mouse::Interaction::Pointer)
+                                    .into();
+                                let tile: Element<'_, Message> = if is_drop_target {
+                                    container(tile)
+                                        .style(|theme: &Theme| {
+                                            iced::widget::container::Style::default().border(
+                                                Border {
+                                                    color: theme.palette().primary,
+                                                    width: 2.0,
+                                                    radius: border_radius().into(),
+                                                },
+                                            )
                                         })
-                                        .interaction(mouse::Interaction::Pointer),
-                                )
+                                        .into()
+                                } else {
+                                    tile
+                                };
+                                row.push(tile)
                             });
                             column.push(tiles)
                         });
@@ -1578,6 +1630,57 @@ impl Gui {
             .into()
     }
 
+    pub(super) fn drag_ghost_view(&self) -> Option<Element<'_, Message>> {
+        let entries = self.dragging_entries.as_ref()?;
+        if entries.is_empty() {
+            return None;
+        }
+        let (icon_name, label) = if let [only] = entries.as_slice() {
+            let is_directory = self
+                .entries
+                .iter()
+                .find(|entry| Path::new(&entry.path) == only)
+                .is_some_and(|entry| entry.is_directory);
+            let name = only
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| only.display().to_string());
+            (if is_directory { "folder" } else { "file" }, name)
+        } else {
+            ("copy", format!("{} items", entries.len()))
+        };
+        let badge = container(
+            row![
+                icon_text(icon_name).size(16),
+                text(truncate_label(&label, 32))
+            ]
+            .spacing(6)
+            .align_y(iced::alignment::Vertical::Center),
+        )
+        .padding([6, 10])
+        .style(|theme: &Theme| {
+            iced::widget::container::Style::default()
+                .background(Color::from_rgba8(128, 128, 128, 0.85))
+                .border(Border {
+                    color: theme.palette().primary,
+                    width: 1.0,
+                    radius: border_radius().into(),
+                })
+        });
+        Some(
+            container(badge)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(iced::Padding {
+                    top: self.window_cursor_position.y + 14.0,
+                    left: self.window_cursor_position.x + 14.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                })
+                .into(),
+        )
+    }
+
     fn address_control(&self) -> Element<'_, Message> {
         if self.editing_address {
             return container(
@@ -1622,11 +1725,38 @@ impl Gui {
                     prefix.as_os_str().to_string_lossy().into_owned()
                 }
             };
-            breadcrumbs = breadcrumbs.push(
+            let is_drop_target =
+                self.dragging_entries.is_some() && self.entry_drop_target.as_ref() == Some(&target);
+            let crumb = mouse_area(
                 button(text(label))
-                    .style(rounded_text_button_style)
+                    .style(move |theme, status| {
+                        if is_drop_target {
+                            rounded_text_button_style(theme, button_style::Status::Hovered)
+                        } else {
+                            rounded_text_button_style(theme, status)
+                        }
+                    })
                     .on_press(Message::OpenPath(target.clone())),
-            );
+            )
+            .on_enter(Message::EntryHovered {
+                path: target.clone(),
+                is_directory: true,
+            })
+            .on_exit(Message::EntryUnhovered(target.clone()));
+            let crumb: Element<'_, Message> = if is_drop_target {
+                container(crumb)
+                    .style(|theme: &Theme| {
+                        iced::widget::container::Style::default().border(Border {
+                            color: theme.palette().primary,
+                            width: 2.0,
+                            radius: border_radius().into(),
+                        })
+                    })
+                    .into()
+            } else {
+                crumb.into()
+            };
+            breadcrumbs = breadcrumbs.push(crumb);
         }
 
         container(

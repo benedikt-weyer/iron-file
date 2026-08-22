@@ -25,7 +25,7 @@ use iced::{
     keyboard, mouse,
     widget::{
         Space, button as button_style, checkbox, container, image, mouse_area, opaque, pick_list,
-        radio, responsive, row, scrollable, slider, svg, text, text_input, toggler, tooltip,
+        radio, responsive, row, scrollable, slider, stack, svg, text, text_input, toggler, tooltip,
     },
     window,
 };
@@ -384,6 +384,10 @@ struct Gui {
     dragging_sidebar_location: Option<PathBuf>,
     sidebar_drop_target: Option<PathBuf>,
     sidebar_drop_at_end: bool,
+    dragging_entries: Option<Vec<PathBuf>>,
+    entry_drop_target: Option<PathBuf>,
+    hovered_entry: Option<(PathBuf, bool)>,
+    window_cursor_position: Point,
     last_entry_click: Option<(PathBuf, Instant)>,
     terminal_recommendations: Vec<String>,
     history: Vec<PathBuf>,
@@ -713,6 +717,14 @@ enum Message {
         path: PathBuf,
         is_directory: bool,
     },
+    EntryHovered {
+        path: PathBuf,
+        is_directory: bool,
+    },
+    EntryUnhovered(PathBuf),
+    LeftMouseButtonPressed,
+    LeftMouseButtonReleased,
+    WindowCursorMoved(Point),
     ExecuteBrowserCommand(BrowserCommand),
     FileCopyFinished(Result<Vec<PathBuf>, String>),
     CutPasteFinished {
@@ -886,6 +898,15 @@ enum Message {
 impl Gui {
     fn subscription(&self) -> Subscription<Message> {
         iced::event::listen_raw(|event, _, _| match event {
+            iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                Some(Message::LeftMouseButtonPressed)
+            }
+            iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                Some(Message::LeftMouseButtonReleased)
+            }
+            iced::Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                Some(Message::WindowCursorMoved(position))
+            }
             iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
                 Some(Message::ModifiersChanged(modifiers))
             }
@@ -1027,6 +1048,10 @@ impl Gui {
             dragging_sidebar_location: None,
             sidebar_drop_target: None,
             sidebar_drop_at_end: false,
+            dragging_entries: None,
+            entry_drop_target: None,
+            hovered_entry: None,
+            window_cursor_position: Point::ORIGIN,
             last_entry_click: None,
             terminal_recommendations: recommended_terminal_commands(),
             history: Vec::new(),
@@ -1144,12 +1169,53 @@ impl Gui {
             }
             Message::FinishRectangleSelection => {
                 self.rectangle_selection = None;
+                self.dragging_entries = None;
+                self.entry_drop_target = None;
                 Task::none()
             }
             Message::NavigateBack => self.navigate_history(-1),
             Message::NavigateForward => self.navigate_history(1),
             Message::EntryClicked { path, is_directory } => {
                 self.handle_entry_click(path, is_directory)
+            }
+            Message::EntryHovered { path, is_directory } => {
+                self.hovered_entry = Some((path.clone(), is_directory));
+                if is_directory && self.dragging_entries.is_some() {
+                    self.entry_drop_target = Some(path);
+                }
+                Task::none()
+            }
+            Message::EntryUnhovered(path) => {
+                if self.hovered_entry.as_ref().is_some_and(|(p, _)| p == &path) {
+                    self.hovered_entry = None;
+                }
+                if self.entry_drop_target.as_ref() == Some(&path) {
+                    self.entry_drop_target = None;
+                }
+                Task::none()
+            }
+            Message::LeftMouseButtonPressed => {
+                if self.view == View::Browser && !self.editing_address {
+                    if let Some((path, _)) = self.hovered_entry.clone() {
+                        self.dragging_entries = Some(if self.selected_entries.contains(&path) {
+                            self.selected_entries.iter().cloned().collect()
+                        } else {
+                            vec![path]
+                        });
+                    }
+                }
+                Task::none()
+            }
+            Message::LeftMouseButtonReleased => {
+                if let Some(target) = self.entry_drop_target.take() {
+                    return self.drop_dragged_entries(target);
+                }
+                self.dragging_entries = None;
+                Task::none()
+            }
+            Message::WindowCursorMoved(position) => {
+                self.window_cursor_position = position;
+                Task::none()
             }
             Message::ConfirmPicker => self.confirm_picker(),
             Message::CancelPicker => self.close_window(),
@@ -1973,9 +2039,16 @@ impl Gui {
                 self.sidebar_drop_at_end = false;
                 Task::none()
             }
-            Message::SidebarReleased(path) => self.release_sidebar_location(path),
+            Message::SidebarReleased(path) => {
+                if self.dragging_entries.is_some() {
+                    self.sidebar_drop_target = None;
+                    self.drop_dragged_entries(path)
+                } else {
+                    self.release_sidebar_location(path)
+                }
+            }
             Message::SidebarDragTarget(path) => {
-                if self.dragging_sidebar_location.is_some() {
+                if self.dragging_sidebar_location.is_some() || self.dragging_entries.is_some() {
                     self.sidebar_drop_target = Some(path);
                 }
                 Task::none()
@@ -3318,6 +3391,28 @@ impl Gui {
         self.save_sidebar_locations(locations);
     }
 
+    fn drop_dragged_entries(&mut self, target: PathBuf) -> Task<Message> {
+        self.entry_drop_target = None;
+        let Some(sources) = self.dragging_entries.take() else {
+            return Task::none();
+        };
+        let sources = sources
+            .into_iter()
+            .filter(|path| path != &target && path.parent() != Some(target.as_path()))
+            .collect::<Vec<_>>();
+        if sources.is_empty() {
+            return Task::none();
+        }
+        let to_delete = sources.clone();
+        self.status = format!("Moving {} item(s)...", to_delete.len());
+        Task::perform(copy_entries(sources, target), move |result| {
+            Message::CutPasteFinished {
+                sources: to_delete.clone(),
+                result,
+            }
+        })
+    }
+
     fn release_sidebar_location(&mut self, target: PathBuf) -> Task<Message> {
         let Some(source) = self.dragging_sidebar_location.take() else {
             return Task::none();
@@ -3521,9 +3616,13 @@ impl Gui {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        match self.view {
+        let content = match self.view {
             View::Browser => self.browser_view(),
             View::Preferences => self.preferences_view(),
+        };
+        match self.drag_ghost_view() {
+            Some(ghost) => stack![content, ghost].into(),
+            None => content,
         }
     }
 }
