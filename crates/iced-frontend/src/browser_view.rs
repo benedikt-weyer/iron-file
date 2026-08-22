@@ -454,15 +454,22 @@ impl Gui {
                         Some(search.depth),
                         Message::SearchDepthSelected,
                     )
-                    .width(Length::Fixed(120.0))
+                    .width(Length::Fixed(140.0))
                     .style(rounded_pick_list_style)
                     .menu_style(rounded_pick_list_menu_style),
-                    tooltip(
-                        button(icon_text("x")).on_press(Message::CloseSearch),
-                        text("Close search"),
-                        tooltip::Position::Bottom,
-                    ),
                 ]
+                .push_maybe(search.in_progress.then(|| {
+                    tooltip(
+                        button(icon_text("circle-stop")).on_press(Message::CancelSearch),
+                        text("Stop search"),
+                        tooltip::Position::Bottom,
+                    )
+                }))
+                .push(tooltip(
+                    button(icon_text("x")).on_press(Message::CloseSearch),
+                    text("Close search"),
+                    tooltip::Position::Bottom,
+                ))
                 .spacing(8)
                 .align_y(iced::alignment::Vertical::Center),
             )

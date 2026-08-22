@@ -22,7 +22,7 @@ use iced::{
     Background, Border, Color, Element, Font, Gradient, Length, Point, Shadow, Subscription, Task,
     Theme, Vector,
     gradient::Linear,
-    keyboard, mouse,
+    keyboard, mouse, task,
     widget::{
         Id, Space, button as button_style, checkbox, container, image, mouse_area, opaque,
         operation, pick_list, radio, responsive, row, scrollable, slider, stack, svg, text,
@@ -508,28 +508,49 @@ struct RectangleSelection {
     initial_selection: HashSet<PathBuf>,
 }
 
+const PROGRESSIVE_SEARCH_MAX_DEPTH: u32 = 64;
+
 #[derive(Debug, Clone)]
 struct SearchState {
     root: PathBuf,
     query: String,
     depth: SearchDepth,
+    in_progress: bool,
+    /// The max-depth of the request currently in flight, and (for a
+    /// progressive search) the number of entries its previous step found,
+    /// used to decide whether to keep going deeper.
+    pending_request: Option<(u32, Option<usize>)>,
+    cancel_handle: Option<task::Handle>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SearchDepth {
     CurrentFolder,
     OneLevel,
+    TwoLevels,
+    ThreeLevels,
     Maximum,
+    Progressive,
 }
 
 impl SearchDepth {
-    const ALL: [Self; 3] = [Self::CurrentFolder, Self::OneLevel, Self::Maximum];
+    const ALL: [Self; 6] = [
+        Self::CurrentFolder,
+        Self::OneLevel,
+        Self::TwoLevels,
+        Self::ThreeLevels,
+        Self::Maximum,
+        Self::Progressive,
+    ];
 
     fn max_depth(self) -> u32 {
         match self {
             Self::CurrentFolder => 0,
             Self::OneLevel => 1,
+            Self::TwoLevels => 2,
+            Self::ThreeLevels => 3,
             Self::Maximum => u32::MAX,
+            Self::Progressive => 0,
         }
     }
 }
@@ -539,7 +560,10 @@ impl std::fmt::Display for SearchDepth {
         formatter.write_str(match self {
             Self::CurrentFolder => "Depth: 0",
             Self::OneLevel => "Depth: 1",
+            Self::TwoLevels => "Depth: 2",
+            Self::ThreeLevels => "Depth: 3",
             Self::Maximum => "Depth: Max",
+            Self::Progressive => "Progressive",
         })
     }
 }
@@ -775,10 +799,12 @@ enum Message {
     SearchQueryChanged(String),
     SearchDepthSelected(SearchDepth),
     RunSearch,
+    CancelSearch,
     SearchFinished {
         root: PathBuf,
         query: String,
         depth: SearchDepth,
+        requested_depth: u32,
         result: Result<Vec<proto::FileEntry>, String>,
     },
     ShowBrowser,
@@ -1468,11 +1494,15 @@ impl Gui {
                     root: self.directory_path.clone(),
                     query: String::new(),
                     depth: SearchDepth::CurrentFolder,
+                    in_progress: false,
+                    pending_request: None,
+                    cancel_handle: None,
                 });
                 self.status = format!("Search in {}", self.directory_path.display());
                 Task::none()
             }
             Message::CloseSearch => {
+                self.cancel_search();
                 self.search = None;
                 self.refresh_directory()
             }
@@ -1489,15 +1519,28 @@ impl Gui {
                 self.run_search()
             }
             Message::RunSearch => self.run_search(),
+            Message::CancelSearch => {
+                self.cancel_search();
+                self.status = "Search cancelled".into();
+                Task::none()
+            }
             Message::SearchFinished {
                 root,
                 query,
                 depth,
+                requested_depth,
                 result,
             } => {
-                if self.search.as_ref().is_none_or(|search| {
-                    search.root != root || search.query != query || search.depth != depth
-                }) {
+                let Some(search) = self.search.as_mut() else {
+                    return Task::none();
+                };
+                let is_current = search.root == root
+                    && search.query == query
+                    && search.depth == depth
+                    && search
+                        .pending_request
+                        .is_some_and(|(pending_depth, _)| pending_depth == requested_depth);
+                if !is_current {
                     return Task::none();
                 }
                 match result {
@@ -1506,13 +1549,39 @@ impl Gui {
                             .folder_sort_override(&self.directory_path)
                             .unwrap_or(self.active_browser_settings().sort_order);
                         sort_entries(&mut entries, sort_order);
+                        let found = entries.len();
                         self.entries = entries;
                         self.selected_entries.clear();
                         self.selection_anchor = None;
-                        self.status = format!("{} search result(s)", self.entries.len());
+
+                        let previous_count = self
+                            .search
+                            .as_ref()
+                            .and_then(|s| s.pending_request)
+                            .and_then(|(_, previous_count)| previous_count);
+                        let keep_going = depth == SearchDepth::Progressive
+                            && requested_depth < PROGRESSIVE_SEARCH_MAX_DEPTH
+                            && previous_count != Some(found);
+                        if keep_going {
+                            self.status =
+                                format!("{found} result(s) so far (depth {requested_depth})...");
+                            return self.dispatch_search(requested_depth + 1, Some(found));
+                        }
+
+                        if let Some(search) = self.search.as_mut() {
+                            search.in_progress = false;
+                            search.pending_request = None;
+                            search.cancel_handle = None;
+                        }
+                        self.status = format!("{found} search result(s)");
                         Task::none()
                     }
                     Err(error) => {
+                        if let Some(search) = self.search.as_mut() {
+                            search.in_progress = false;
+                            search.pending_request = None;
+                            search.cancel_handle = None;
+                        }
                         self.status = format!("Search failed: {error}");
                         Task::none()
                     }
@@ -3516,22 +3585,61 @@ impl Gui {
     }
 
     fn run_search(&mut self) -> Task<Message> {
+        self.cancel_search();
         let Some(search) = &self.search else {
             return Task::none();
         };
         self.status = format!("Searching {}", search.root.display());
+        let starting_depth = if search.depth == SearchDepth::Progressive {
+            0
+        } else {
+            search.depth.max_depth()
+        };
+        self.dispatch_search(starting_depth, None)
+    }
+
+    /// Issues one search request at `requested_depth`. For a progressive
+    /// search this is one step of many; `previous_count` is the number of
+    /// results the prior step found, used to detect when going deeper stops
+    /// turning up anything new.
+    fn dispatch_search(
+        &mut self,
+        requested_depth: u32,
+        previous_count: Option<usize>,
+    ) -> Task<Message> {
+        let Some(search) = &mut self.search else {
+            return Task::none();
+        };
+        search.in_progress = true;
+        search.pending_request = Some((requested_depth, previous_count));
         let root = search.root.clone();
         let query = search.query.clone();
         let depth = search.depth;
-        Task::perform(
-            search_directory(root.clone(), query.clone(), depth.max_depth()),
+        let (task, handle) = Task::perform(
+            search_directory(root.clone(), query.clone(), requested_depth),
             move |result| Message::SearchFinished {
-                root,
-                query,
+                root: root.clone(),
+                query: query.clone(),
                 depth,
+                requested_depth,
                 result,
             },
         )
+        .abortable();
+        search.cancel_handle = Some(handle);
+        task
+    }
+
+    fn cancel_search(&mut self) {
+        if let Some(search) = &mut self.search
+            && let Some(handle) = search.cancel_handle.take()
+        {
+            handle.abort();
+        }
+        if let Some(search) = &mut self.search {
+            search.in_progress = false;
+            search.pending_request = None;
+        }
     }
 
     fn apply_response(
