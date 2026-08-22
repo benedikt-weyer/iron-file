@@ -1501,42 +1501,70 @@ impl Gui {
                     icon.into()
                 }
             };
-        if !entry.is_symlink {
+        let is_cut = self.paste_buffer.as_ref().is_some_and(|buffer| {
+            matches!(buffer.mode, PasteMode::Move)
+                && buffer
+                    .entries
+                    .iter()
+                    .any(|path| path.as_path() == Path::new(&entry.path))
+        });
+
+        if !entry.is_symlink && !is_cut {
             return icon;
         }
 
         let badge_edge = (f32::from(size) * 0.24).clamp(10.0, 18.0);
-        let badge = container(
-            icon_text("link")
-                .size((badge_edge - 4.0).max(7.0))
-                .color(Color::from_rgb8(35, 35, 35)),
-        )
-        .width(Length::Fixed(badge_edge))
-        .height(Length::Fixed(badge_edge))
-        .align_x(iced::alignment::Horizontal::Center)
-        .align_y(iced::alignment::Vertical::Center)
-        .style(|_| {
-            iced::widget::container::Style::default()
-                .background(Color::from_rgba8(235, 235, 235, 0.92))
-                .border(Border {
-                    color: Color::from_rgba8(70, 70, 70, 0.7),
-                    width: 1.0,
-                    radius: border_radius().into(),
-                })
-        });
-        stack![
+        let badge = |glyph: &'static str| {
+            container(
+                icon_text(glyph)
+                    .size((badge_edge - 4.0).max(7.0))
+                    .color(Color::from_rgb8(35, 35, 35)),
+            )
+            .width(Length::Fixed(badge_edge))
+            .height(Length::Fixed(badge_edge))
+            .align_x(iced::alignment::Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Center)
+            .style(|_| {
+                iced::widget::container::Style::default()
+                    .background(Color::from_rgba8(235, 235, 235, 0.92))
+                    .border(Border {
+                        color: Color::from_rgba8(70, 70, 70, 0.7),
+                        width: 1.0,
+                        radius: border_radius().into(),
+                    })
+            })
+        };
+
+        let mut layers: Vec<Element<'a, Message>> = vec![
             container(icon)
                 .width(Length::Fixed(f32::from(size)))
-                .height(Length::Fixed(f32::from(size))),
-            container(badge)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .align_x(iced::alignment::Horizontal::Right)
-                .align_y(iced::alignment::Vertical::Bottom),
-        ]
-        .width(Length::Fixed(f32::from(size)))
-        .height(Length::Fixed(f32::from(size)))
-        .into()
+                .height(Length::Fixed(f32::from(size)))
+                .into(),
+        ];
+        if entry.is_symlink {
+            layers.push(
+                container(badge("link"))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(iced::alignment::Horizontal::Right)
+                    .align_y(iced::alignment::Vertical::Bottom)
+                    .into(),
+            );
+        }
+        if is_cut {
+            layers.push(
+                container(badge("scissors"))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(iced::alignment::Horizontal::Left)
+                    .align_y(iced::alignment::Vertical::Top)
+                    .into(),
+            );
+        }
+        iced::widget::Stack::with_children(layers)
+            .width(Length::Fixed(f32::from(size)))
+            .height(Length::Fixed(f32::from(size)))
+            .into()
     }
 
     fn address_control(&self) -> Element<'_, Message> {

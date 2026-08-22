@@ -550,6 +550,7 @@ enum HistoryRequest {
 #[derive(Debug, Clone)]
 enum BrowserCommand {
     CopySelection,
+    CutSelection,
     RenameSelection,
     CopyLocation(PathBuf),
     Paste,
@@ -634,6 +635,7 @@ impl std::fmt::Display for FolderSortSelection {
 #[derive(Debug, Clone, Copy)]
 enum PasteMode {
     Copy,
+    Move,
     Symlink,
 }
 
@@ -712,6 +714,10 @@ enum Message {
     },
     ExecuteBrowserCommand(BrowserCommand),
     FileCopyFinished(Result<Vec<PathBuf>, String>),
+    CutPasteFinished {
+        sources: Vec<PathBuf>,
+        result: Result<Vec<PathBuf>, String>,
+    },
     ArchiveFinished {
         action: &'static str,
         result: Result<Vec<PathBuf>, String>,
@@ -894,6 +900,9 @@ impl Gui {
                     keyboard::Key::Character("c" | "C") => Some(Message::ExecuteBrowserCommand(
                         BrowserCommand::CopySelection,
                     )),
+                    keyboard::Key::Character("x" | "X") => {
+                        Some(Message::ExecuteBrowserCommand(BrowserCommand::CutSelection))
+                    }
                     keyboard::Key::Character("v" | "V") => {
                         Some(Message::ExecuteBrowserCommand(BrowserCommand::Paste))
                     }
@@ -1174,6 +1183,17 @@ impl Gui {
                 }
                 Err(error) => {
                     self.status = format!("Copy failed: {error}");
+                    Task::none()
+                }
+            },
+            Message::CutPasteFinished { sources, result } => match result {
+                Ok(paths) => {
+                    self.paste_buffer = None;
+                    self.status = format!("Moved {} item(s)", paths.len());
+                    Task::perform(delete_entries(sources), Message::FileDeleteFinished)
+                }
+                Err(error) => {
+                    self.status = format!("Move failed: {error}");
                     Task::none()
                 }
             },
@@ -2666,6 +2686,22 @@ impl Gui {
                 }
                 Task::none()
             }
+            BrowserCommand::CutSelection => {
+                let mut entries = self.selected_entries.iter().cloned().collect::<Vec<_>>();
+                entries.sort();
+                if entries.is_empty() {
+                    self.status = "Select files or folders to cut".into();
+                } else {
+                    let count = entries.len();
+                    self.paste_buffer = Some(PasteBuffer {
+                        entries,
+                        mode: PasteMode::Move,
+                    });
+                    self.context_entry = None;
+                    self.status = format!("Cut {count} item(s) to the clipboard");
+                }
+                Task::none()
+            }
             BrowserCommand::RenameSelection => {
                 if self.selected_entries.len() != 1 {
                     self.status = "Select exactly one file or folder to rename".into();
@@ -2696,6 +2732,26 @@ impl Gui {
                         copy_entries(buffer.entries, self.directory_path.clone()),
                         Message::FileCopyFinished,
                     ),
+                    PasteMode::Move => {
+                        let destination = self.directory_path.clone();
+                        let sources = buffer
+                            .entries
+                            .into_iter()
+                            .filter(|path| path.parent() != Some(destination.as_path()))
+                            .collect::<Vec<_>>();
+                        if sources.is_empty() {
+                            self.paste_buffer = None;
+                            self.status = "Item(s) are already in this folder".into();
+                            return Task::none();
+                        }
+                        let to_delete = sources.clone();
+                        Task::perform(copy_entries(sources, destination), move |result| {
+                            Message::CutPasteFinished {
+                                sources: to_delete.clone(),
+                                result,
+                            }
+                        })
+                    }
                     PasteMode::Symlink => Task::perform(
                         create_symlinks(buffer.entries, self.directory_path.clone()),
                         Message::FileCopyFinished,
