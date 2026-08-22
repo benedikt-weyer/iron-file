@@ -12,6 +12,60 @@ fn name_label_lines(name: &str, line_characters: usize, max_lines: usize) -> Vec
         .collect()
 }
 
+fn name_prompt_dialog<'a>(
+    title: String,
+    value: &'a str,
+    input_id: Option<Id>,
+    on_input: impl Fn(String) -> Message + 'a,
+    on_confirm: Message,
+    on_cancel: Message,
+    confirm_label: &'a str,
+    width: Option<Length>,
+) -> Element<'a, Message> {
+    let mut input = text_input("Name", value)
+        .on_input(on_input)
+        .on_submit(on_confirm.clone());
+    if let Some(id) = input_id {
+        input = input.id(id);
+    }
+    let mut dialog = container(
+        column![
+            text(title),
+            input,
+            row![
+                button(text("Cancel")).on_press(on_cancel.clone()),
+                button(text(confirm_label)).on_press(on_confirm),
+            ]
+            .spacing(8),
+        ]
+        .spacing(12),
+    )
+    .padding(16)
+    .style(|theme: &Theme| {
+        iced::widget::container::Style::default()
+            .background(theme.palette().background)
+            .border(Border {
+                color: theme.palette().primary,
+                width: 1.0,
+                radius: border_radius().into(),
+            })
+    });
+    if let Some(width) = width {
+        dialog = dialog.width(width);
+    }
+    stack![
+        mouse_area(Space::new().width(Length::Fill).height(Length::Fill)).on_press(on_cancel),
+        container(dialog)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    ]
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
 fn name_label(
     name: &str,
     line_characters: usize,
@@ -1050,80 +1104,28 @@ impl Gui {
         });
         let create_dialog = self.pending_create.as_ref().map(|(_, is_directory)| {
             let kind = if *is_directory { "folder" } else { "file" };
-            let dialog = container(
-                column![
-                    text(format!("Create {kind}")),
-                    text_input("Name", &self.create_entry_name)
-                        .on_input(Message::CreateEntryNameChanged)
-                        .on_submit(Message::ConfirmCreateEntry),
-                    row![
-                        button(text("Cancel")).on_press(Message::CancelCreateEntry),
-                        button(text("Create")).on_press(Message::ConfirmCreateEntry),
-                    ]
-                    .spacing(8),
-                ]
-                .spacing(12),
+            name_prompt_dialog(
+                format!("Create {kind}"),
+                &self.create_entry_name,
+                Some(create_name_input_id()),
+                Message::CreateEntryNameChanged,
+                Message::ConfirmCreateEntry,
+                Message::CancelCreateEntry,
+                "Create",
+                Some(Length::Fixed(360.0)),
             )
-            .padding(16)
-            .style(|theme: &Theme| {
-                iced::widget::container::Style::default()
-                    .background(theme.palette().background)
-                    .border(Border {
-                        color: theme.palette().primary,
-                        width: 1.0,
-                        radius: border_radius().into(),
-                    })
-            });
-            stack![
-                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-                    .on_press(Message::CancelCreateEntry),
-                container(dialog)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill),
-            ]
-            .width(Length::Fill)
-            .height(Length::Fill)
         });
         let rename_dialog = self.pending_rename.as_ref().map(|_| {
-            let dialog = container(
-                column![
-                    text("Rename"),
-                    text_input("Name", &self.rename_entry_name)
-                        .id(rename_name_input_id())
-                        .on_input(Message::RenameEntryNameChanged)
-                        .on_submit(Message::ConfirmRenameEntry),
-                    row![
-                        button(text("Cancel")).on_press(Message::CancelRenameEntry),
-                        button(text("Rename")).on_press(Message::ConfirmRenameEntry),
-                    ]
-                    .spacing(8),
-                ]
-                .spacing(12),
+            name_prompt_dialog(
+                "Rename".to_owned(),
+                &self.rename_entry_name,
+                Some(rename_name_input_id()),
+                Message::RenameEntryNameChanged,
+                Message::ConfirmRenameEntry,
+                Message::CancelRenameEntry,
+                "Rename",
+                Some(Length::Fixed(360.0)),
             )
-            .width(Length::Fixed(360.0))
-            .padding(16)
-            .style(|theme: &Theme| {
-                iced::widget::container::Style::default()
-                    .background(theme.palette().background)
-                    .border(Border {
-                        color: theme.palette().primary,
-                        width: 1.0,
-                        radius: border_radius().into(),
-                    })
-            });
-            stack![
-                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-                    .on_press(Message::CancelRenameEntry),
-                container(dialog)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill),
-            ]
-            .width(Length::Fill)
-            .height(Length::Fill)
         });
         let compression_dialog = self.pending_compression.then(|| {
             let dialog = container(
