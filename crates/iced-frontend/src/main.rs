@@ -24,8 +24,9 @@ use iced::{
     gradient::Linear,
     keyboard, mouse,
     widget::{
-        Space, button as button_style, checkbox, container, image, mouse_area, opaque, pick_list,
-        radio, responsive, row, scrollable, slider, stack, svg, text, text_input, toggler, tooltip,
+        Id, Space, button as button_style, checkbox, container, image, mouse_area, opaque,
+        operation, pick_list, radio, responsive, row, scrollable, slider, stack, svg, text,
+        text_input, toggler, tooltip,
     },
     window,
 };
@@ -48,6 +49,10 @@ use tokio::runtime::Runtime;
 const DETACHED_ENV: &str = "IRON_FILE_DETACHED";
 const NAVIGATION_CONTROL_HEIGHT: f32 = 32.0;
 const DRAG_START_THRESHOLD: f32 = 5.0;
+
+fn rename_name_input_id() -> Id {
+    Id::new("rename-entry-name-input")
+}
 static BORDER_RADIUS: AtomicU8 = AtomicU8::new(6);
 
 fn shortcut_key_name(key: &keyboard::Key) -> Option<String> {
@@ -1134,6 +1139,9 @@ impl Gui {
                     self.context_entry = None;
                 } else if self.pending_info.is_some() {
                     self.pending_info = None;
+                } else if self.pending_rename.is_some() {
+                    self.pending_rename = None;
+                    self.rename_entry_name.clear();
                 } else if self.editing_address {
                     self.address = self.directory_path.display().to_string();
                     self.editing_address = false;
@@ -1413,7 +1421,8 @@ impl Gui {
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 self.pending_rename = Some(path);
-                Task::none()
+                let id = rename_name_input_id();
+                Task::batch([operation::focus(id.clone()), operation::select_all(id)])
             }
             Message::RenameEntryNameChanged(name) => {
                 self.rename_entry_name = name;

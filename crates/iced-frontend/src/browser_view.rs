@@ -1079,6 +1079,7 @@ impl Gui {
                 column![
                     text("Rename"),
                     text_input("Name", &self.rename_entry_name)
+                        .id(rename_name_input_id())
                         .on_input(Message::RenameEntryNameChanged)
                         .on_submit(Message::ConfirmRenameEntry),
                     row![
@@ -1089,6 +1090,7 @@ impl Gui {
                 ]
                 .spacing(12),
             )
+            .width(Length::Fixed(360.0))
             .padding(16)
             .style(|theme: &Theme| {
                 iced::widget::container::Style::default()
