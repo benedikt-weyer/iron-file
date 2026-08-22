@@ -1026,9 +1026,15 @@ impl Gui {
             .as_ref()
             .and_then(|picker| picker.save_file_name.clone());
         let original_save_file_name = save_file_name.clone();
-        let directory_path = initial_path
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         let config_store = ConfigStore::from_environment();
+        let directory_path = initial_path
+            .or_else(|| {
+                picker
+                    .is_some()
+                    .then(|| config_store.last_picker_directory().ok().flatten())
+                    .flatten()
+            })
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         let mut profiles = config_store.profiles().unwrap_or_default();
         if profiles.is_empty() {
             if let Ok(profile) = config_store.create_profile("Default") {
@@ -2832,6 +2838,11 @@ impl Gui {
     }
 
     fn close_window(&self) -> Task<Message> {
+        if self.picker.is_some() {
+            let _ = self
+                .config_store
+                .set_last_picker_directory(&self.directory_path);
+        }
         iced::exit()
     }
 

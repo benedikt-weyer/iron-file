@@ -469,6 +469,8 @@ struct ProfileFile {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 struct StateFile {
     active_profile: Option<PathBuf>,
+    #[serde(default)]
+    last_picker_directory: Option<PathBuf>,
 }
 
 impl ConfigStore {
@@ -562,21 +564,29 @@ impl ConfigStore {
     }
 
     pub fn active_profile(&self) -> Result<Option<PathBuf>, String> {
-        let path = self.user_config_dir.join(STATE_FILE);
-        let content = match fs::read_to_string(&path) {
-            Ok(content) => content,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(format!("Could not read {}: {error}", path.display())),
-        };
-        toml::from_str::<StateFile>(&content)
-            .map(|state| state.active_profile.filter(|profile| profile.exists()))
-            .map_err(|error| format!("Could not parse {}: {error}", path.display()))
+        Ok(self
+            .read_state()?
+            .active_profile
+            .filter(|profile| profile.exists()))
     }
 
     pub fn set_active_profile(&self, profile: &Path) -> Result<(), String> {
-        self.write_state(&StateFile {
-            active_profile: Some(profile.to_path_buf()),
-        })
+        let mut state = self.read_state()?;
+        state.active_profile = Some(profile.to_path_buf());
+        self.write_state(&state)
+    }
+
+    pub fn last_picker_directory(&self) -> Result<Option<PathBuf>, String> {
+        Ok(self
+            .read_state()?
+            .last_picker_directory
+            .filter(|directory| directory.is_dir()))
+    }
+
+    pub fn set_last_picker_directory(&self, directory: &Path) -> Result<(), String> {
+        let mut state = self.read_state()?;
+        state.last_picker_directory = Some(directory.to_path_buf());
+        self.write_state(&state)
     }
 
     pub fn save_color_mode(
@@ -776,6 +786,19 @@ impl ConfigStore {
         let content = toml::to_string_pretty(profile)
             .map_err(|error| format!("Could not encode profile: {error}"))?;
         self.write_file(path, content)
+    }
+
+    fn read_state(&self) -> Result<StateFile, String> {
+        let path = self.user_config_dir.join(STATE_FILE);
+        let content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(StateFile::default());
+            }
+            Err(error) => return Err(format!("Could not read {}: {error}", path.display())),
+        };
+        toml::from_str::<StateFile>(&content)
+            .map_err(|error| format!("Could not parse {}: {error}", path.display()))
     }
 
     fn write_state(&self, state: &StateFile) -> Result<(), String> {
@@ -997,6 +1020,25 @@ mod tests {
         assert!(profile.path.ends_with("work-files.toml"));
 
         store.set_active_profile(&profile.path).unwrap();
+        assert_eq!(store.active_profile().unwrap(), Some(profile.path));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn persists_the_last_picker_directory_alongside_the_active_profile() {
+        let directory = test_directory();
+        let store = ConfigStore::with_paths(directory.join("user"), vec![]);
+        let profile = store.create_profile("Work files").unwrap();
+        store.set_active_profile(&profile.path).unwrap();
+
+        let picker_directory = directory.join("Downloads");
+        fs::create_dir_all(&picker_directory).unwrap();
+        store.set_last_picker_directory(&picker_directory).unwrap();
+
+        assert_eq!(
+            store.last_picker_directory().unwrap(),
+            Some(picker_directory)
+        );
         assert_eq!(store.active_profile().unwrap(), Some(profile.path));
         fs::remove_dir_all(directory).unwrap();
     }

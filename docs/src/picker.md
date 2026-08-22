@@ -15,7 +15,7 @@ cancelled picker exits without selected paths.
 
 | Parameter | Meaning |
 | --- | --- |
-| `PATH` | First positional argument. Opens this file or directory initially. Relative paths are resolved from the invoking directory. |
+| `PATH` | First positional argument. Opens this file or directory initially. Relative paths are resolved from the invoking directory. When omitted in picker mode, the picker reopens the last directory a picker was closed in (see below) instead of the invoking directory. |
 | `-f`, `--follow` | Keep the standard browser attached to the terminal and stream backend logs. |
 | `--mode picker` | Run the Iced frontend as a picker. `--picker` is an alias. |
 | `--file` | Accept files. This is the picker default. |
@@ -43,6 +43,16 @@ click selects it.
 
 When `--save-name` is present, the picker shows the suggested name in a bottom
 input bar. Editing it reveals a reset button that restores the original name.
+
+## Remembering the Last Directory
+
+Every time a picker window closes (confirmed or cancelled), the directory it
+was showing is saved to the user's `config.toml` state file (next to the
+active-profile setting). The next picker launched without an explicit `PATH`
+reopens that directory instead of the invoking directory, so the XDG Desktop
+Portal file/folder chooser — which never passes a starting path — resumes
+where the user left off. Passing an explicit `PATH` always takes precedence
+over the remembered directory.
 
 ## Development Scripts
 
