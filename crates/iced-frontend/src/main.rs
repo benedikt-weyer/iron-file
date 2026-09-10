@@ -75,7 +75,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    prefer_x11_when_available();
     if let Ok(runtime) = Runtime::new() {
         let _ = runtime.block_on(ensure_backend());
     }
@@ -347,19 +346,6 @@ mod startup_tests {
         assert_eq!(location, PathBuf::from("/tmp"));
     }
 }
-
-#[cfg(target_os = "linux")]
-fn prefer_x11_when_available() {
-    if std::env::var_os("DISPLAY").is_some() {
-        unsafe {
-            std::env::remove_var("WAYLAND_DISPLAY");
-            std::env::remove_var("WAYLAND_SOCKET");
-        }
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn prefer_x11_when_available() {}
 
 struct Gui {
     follow_logs: bool,
