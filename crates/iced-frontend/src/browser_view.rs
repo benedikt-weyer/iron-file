@@ -260,6 +260,7 @@ impl Gui {
                     .smooth_scrolling(browser_settings.smooth_scrolling)
                     .scroll_step(f32::from(browser_settings.scroll_step))
                     .style(modern_scrollable_style)
+                    .on_scroll(Message::BrowserScrolled)
                     .into()
             })
             .into()
@@ -520,6 +521,7 @@ impl Gui {
                     .smooth_scrolling(browser_settings.smooth_scrolling)
                     .scroll_step(f32::from(browser_settings.scroll_step))
                     .style(modern_scrollable_style)
+                    .on_scroll(Message::BrowserScrolled)
                     .into()
             };
             row![
@@ -545,6 +547,7 @@ impl Gui {
                 .smooth_scrolling(browser_settings.smooth_scrolling)
                 .scroll_step(f32::from(browser_settings.scroll_step))
                 .style(modern_scrollable_style)
+                .on_scroll(Message::BrowserScrolled)
                 .into()
         };
         let selection_overlay: Option<Element<'_, Message>> =

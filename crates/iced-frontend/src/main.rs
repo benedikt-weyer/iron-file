@@ -410,6 +410,7 @@ struct Gui {
     selection_anchor: Option<PathBuf>,
     modifiers: keyboard::Modifiers,
     browser_pointer: Point,
+    browser_scroll_offset: scrollable::AbsoluteOffset,
     rectangle_selection: Option<RectangleSelection>,
     search: Option<SearchState>,
     tile_columns: Rc<Cell<usize>>,
@@ -783,6 +784,7 @@ enum Message {
     StartRectangleSelection,
     RectanglePointerMoved(Point),
     FinishRectangleSelection,
+    BrowserScrolled(scrollable::Viewport),
     OpenParent,
     ShowSearch,
     CloseSearch,
@@ -1107,6 +1109,7 @@ impl Gui {
             selection_anchor: None,
             modifiers: keyboard::Modifiers::default(),
             browser_pointer: Point::ORIGIN,
+            browser_scroll_offset: scrollable::AbsoluteOffset::default(),
             rectangle_selection: None,
             search: None,
             tile_columns: Rc::new(Cell::new(1)),
@@ -1208,6 +1211,11 @@ impl Gui {
                 self.dragging_entries = None;
                 self.pending_drag = None;
                 self.entry_drop_target = None;
+                Task::none()
+            }
+            Message::BrowserScrolled(viewport) => {
+                self.browser_scroll_offset = viewport.absolute_offset();
+                self.update_rectangle_selection();
                 Task::none()
             }
             Message::NavigateBack => self.navigate_history(-1),
@@ -3021,10 +3029,11 @@ impl Gui {
             return;
         };
 
-        let left = selection.start.x.min(selection.end.x);
-        let right = selection.start.x.max(selection.end.x);
-        let top = selection.start.y.min(selection.end.y);
-        let bottom = selection.start.y.max(selection.end.y);
+        let offset = self.browser_scroll_offset;
+        let left = selection.start.x.min(selection.end.x) + offset.x;
+        let right = selection.start.x.max(selection.end.x) + offset.x;
+        let top = selection.start.y.min(selection.end.y) + offset.y;
+        let bottom = selection.start.y.max(selection.end.y) + offset.y;
         let browser = self.active_browser_settings();
         let tile_width = f32::from(browser.item_size) * 3.5;
         let tile_height = tile_width * 1.2;
