@@ -118,8 +118,8 @@ pub struct WindowState {
     /// The inner size of the window, as in without client side decorations.
     size: LogicalSize<u32>,
 
-    /// Whether we should decorate the frame.
-    decorate: bool,
+    /// Whether the CSD fail to create, so we don't try to create them on each iteration.
+    csd_fails: bool,
 
     /// Whether to draw a client-side decoration frame when the compositor
     /// declines server-side decoration (`DecorationMode::Client`). Upstream
@@ -128,6 +128,9 @@ pub struct WindowState {
     /// fork defaults it to `false`: whether `attributes.decorations` is
     /// `true` or `false`, a `Client` response simply means no decoration.
     csd_fallback: bool,
+
+    /// Whether we should decorate the frame.
+    decorate: bool,
 
     /// Min size.
     min_inner_size: LogicalSize<u32>,
@@ -193,6 +196,7 @@ impl WindowState {
             blur_manager: winit_state.kwin_blur_manager.clone(),
             compositor,
             connection,
+            csd_fails: false,
             cursor_grab_mode: GrabState::new(),
             selected_cursor: Default::default(),
             cursor_visible: true,
@@ -284,6 +288,7 @@ impl WindowState {
             configure.decoration_mode == DecorationMode::Client
                 && self.frame.is_none()
                 && self.csd_fallback
+                && !self.csd_fails
         }) {
             match WinitFrame::new(
                 &self.window,
@@ -304,6 +309,7 @@ impl WindowState {
                 },
                 Err(err) => {
                     warn!("Failed to create client side decorations frame: {err}");
+                    self.csd_fails = true;
                 },
             }
         } else if configure.decoration_mode == DecorationMode::Server {
