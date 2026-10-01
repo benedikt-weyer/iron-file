@@ -224,6 +224,7 @@ pub enum ContextMenuItem {
     Rename,
     Duplicate,
     Open,
+    OpenWith,
     CopyLocation,
     CopySelection,
     DeleteSelection,
@@ -235,13 +236,14 @@ pub enum ContextMenuItem {
 }
 
 impl ContextMenuItem {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Info,
         Self::CreateFolder,
         Self::CreateFile,
         Self::Rename,
         Self::Duplicate,
         Self::Open,
+        Self::OpenWith,
         Self::CopyLocation,
         Self::CopySelection,
         Self::DeleteSelection,
@@ -252,9 +254,10 @@ impl ContextMenuItem {
         Self::OpenTerminal,
     ];
 
-    pub const FILE_OPTIONS: [Self; 7] = [
+    pub const FILE_OPTIONS: [Self; 8] = [
         Self::Info,
         Self::Open,
+        Self::OpenWith,
         Self::Rename,
         Self::Duplicate,
         Self::CopyLocation,
@@ -288,6 +291,7 @@ impl fmt::Display for ContextMenuItem {
             Self::Rename => "Rename",
             Self::Duplicate => "Duplicate",
             Self::Open => "Open",
+            Self::OpenWith => "Open with...",
             Self::CopyLocation => "Copy location",
             Self::CopySelection => "Copy selection",
             Self::DeleteSelection => "Delete selection",

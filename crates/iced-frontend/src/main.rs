@@ -464,6 +464,8 @@ struct ContextEntry {
     is_directory: bool,
     is_sidebar_location: bool,
     opener: Option<Result<String, String>>,
+    open_with_expanded: bool,
+    open_with_apps: Option<Result<Vec<AppChoice>, String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -883,6 +885,17 @@ enum Message {
     },
     CloseEntryInfo,
     OpenContextFile,
+    ToggleOpenWith,
+    OpenWithAppsLoaded {
+        path: PathBuf,
+        apps: Result<Vec<AppChoice>, String>,
+    },
+    OpenWithApp(String),
+    SetDefaultApp(String),
+    DefaultAppSet {
+        path: PathBuf,
+        result: Result<(), String>,
+    },
     OpenTerminalHere,
     AddContextFolderToSidebar,
     RemoveContextFolderFromSidebar,
@@ -1945,6 +1958,8 @@ impl Gui {
                     is_directory,
                     is_sidebar_location: false,
                     opener: None,
+                    open_with_expanded: false,
+                    open_with_apps: None,
                 });
                 self.context_position = self.pointer_position;
                 if is_directory {
@@ -1964,6 +1979,8 @@ impl Gui {
                     is_directory: true,
                     is_sidebar_location: true,
                     opener: None,
+                    open_with_expanded: false,
+                    open_with_apps: None,
                 });
                 self.context_position = self.pointer_position;
                 Task::none()
@@ -2118,6 +2135,73 @@ impl Gui {
                     return Task::none();
                 };
                 Task::perform(open_file(context_entry.path), Message::FileOpened)
+            }
+            Message::ToggleOpenWith => {
+                let Some(context_entry) = &mut self.context_entry else {
+                    return Task::none();
+                };
+                context_entry.open_with_expanded = !context_entry.open_with_expanded;
+                if context_entry.open_with_expanded && context_entry.open_with_apps.is_none() {
+                    let path = context_entry.path.clone();
+                    Task::perform(list_open_with_apps(path.clone()), move |apps| {
+                        Message::OpenWithAppsLoaded {
+                            path: path.clone(),
+                            apps,
+                        }
+                    })
+                } else {
+                    Task::none()
+                }
+            }
+            Message::OpenWithAppsLoaded { path, apps } => {
+                if let Some(context_entry) = &mut self.context_entry
+                    && context_entry.path == path
+                {
+                    context_entry.open_with_apps = Some(apps);
+                }
+                Task::none()
+            }
+            Message::OpenWithApp(app_id) => {
+                let Some(context_entry) = self.context_entry.take() else {
+                    return Task::none();
+                };
+                Task::perform(
+                    open_with_app(context_entry.path, app_id),
+                    Message::FileOpened,
+                )
+            }
+            Message::SetDefaultApp(app_id) => {
+                let Some(context_entry) = &self.context_entry else {
+                    return Task::none();
+                };
+                let path = context_entry.path.clone();
+                Task::perform(
+                    set_default_app_for_path(path.clone(), app_id),
+                    move |result| Message::DefaultAppSet {
+                        path: path.clone(),
+                        result,
+                    },
+                )
+            }
+            Message::DefaultAppSet { path, result } => {
+                self.status = match &result {
+                    Ok(()) => "Default application updated".into(),
+                    Err(error) => error.clone(),
+                };
+                let Some(context_entry) = &mut self.context_entry else {
+                    return Task::none();
+                };
+                if context_entry.path != path {
+                    return Task::none();
+                }
+                context_entry.open_with_apps = None;
+                context_entry.opener = None;
+                Task::perform(default_file_opener(path.clone()), move |opener| {
+                    Message::FileOpenerResolved {
+                        path: path.clone(),
+                        opener,
+                    }
+                })
             }
             Message::OpenTerminalHere => {
                 let Some(ContextEntry {

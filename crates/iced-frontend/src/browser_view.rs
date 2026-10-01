@@ -755,6 +755,74 @@ impl Gui {
                             )
                             .into(),
                         ),
+                        ContextMenuItem::OpenWith if !entry.is_directory => {
+                            let toggle_icon = if entry.open_with_expanded {
+                                "chevron-down"
+                            } else {
+                                "chevron-right"
+                            };
+                            let header = button(
+                                row![
+                                    icon_text("app-window").size(16),
+                                    text("Open with...").width(Length::Fill),
+                                    icon_text(toggle_icon).size(14),
+                                ]
+                                .spacing(8),
+                            )
+                            .width(Length::Fill)
+                            .style(context_menu_button_style)
+                            .on_press(Message::ToggleOpenWith);
+
+                            let mut group = column![header].spacing(4);
+                            if entry.open_with_expanded {
+                                let open_with_body: Element<'_, Message> = match &entry
+                                    .open_with_apps
+                                {
+                                    None => container(text("Loading applications...").size(13))
+                                        .padding([2, 28])
+                                        .into(),
+                                    Some(Err(error)) => container(text(error.clone()).size(13))
+                                        .padding([2, 28])
+                                        .into(),
+                                    Some(Ok(apps)) if apps.is_empty() => {
+                                        container(text("No applications found").size(13))
+                                            .padding([2, 28])
+                                            .into()
+                                    }
+                                    Some(Ok(apps)) => apps
+                                        .iter()
+                                        .fold(column![].spacing(2), |list, app| {
+                                            list.push(
+                                                row![
+                                                    button(text(app.name.clone()).size(13))
+                                                        .width(Length::Fill)
+                                                        .style(context_menu_button_style)
+                                                        .on_press(Message::OpenWithApp(
+                                                            app.id.clone()
+                                                        )),
+                                                    button(
+                                                        icon_text(if app.is_default {
+                                                            "star"
+                                                        } else {
+                                                            "star-off"
+                                                        })
+                                                        .size(14)
+                                                    )
+                                                    .style(context_menu_button_style)
+                                                    .on_press_maybe((!app.is_default).then_some(
+                                                        Message::SetDefaultApp(app.id.clone())
+                                                    )),
+                                                ]
+                                                .spacing(4)
+                                                .padding(iced::Padding::ZERO.left(20)),
+                                            )
+                                        })
+                                        .into(),
+                                };
+                                group = group.push(open_with_body);
+                            }
+                            Some(group.into())
+                        }
                         ContextMenuItem::CopyLocation => Some(
                             button(
                                 row![icon_text("copy").size(16), text("Copy location")].spacing(8),

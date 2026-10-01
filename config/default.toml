@@ -27,6 +27,7 @@ thumbnail_location = "~/.cache/iron-file/thumbnails"
 file_context_menu_items = [
   "info",
   "open",
+  "open-with",
   "rename",
   "duplicate",
   "copy-location",

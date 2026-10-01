@@ -27,11 +27,17 @@ The `[browser]` `file_context_menu_items` and `folder_context_menu_items`
 arrays independently control visible actions and their order. Omit an item to
 hide it. Folder defaults put `"create-folder"` and `"create-file"` first.
 Available values are `"create-folder"`, `"create-file"`, `"rename"`, `"duplicate"`, `"open"`,
-`"copy-location"`, `"copy-selection"`, `"delete-selection"`, `"paste"`,
+`"open-with"`, `"copy-location"`, `"copy-selection"`, `"delete-selection"`, `"paste"`,
 `"toggle-sidebar-location"`, `"create-symlink"`,
 `"add-symlink-to-paste-buffer"`, and `"open-terminal"`. Actions that do not
 apply to the selected file or folder are hidden automatically. The legacy
 `context_menu_items` setting is read as the initial list for both menus.
+
+`"open-with"` expands into the applications GIO reports as able to open the
+file's MIME type. Selecting one launches the file with it; the star button
+next to each entry marks that application as the system default for the
+MIME type (via `g_app_info_set_as_default_for_type`), which also updates
+what `"open"` uses.
 
 The `[browser]` `quick_toolbar_items` array controls the visible quick-toolbar
 actions and their order. Available values are `"refresh"`, `"clone-window"`,

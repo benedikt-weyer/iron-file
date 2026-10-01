@@ -596,10 +596,10 @@ pub(super) fn terminal_command_is_available(command: &str) -> bool {
     })
 }
 
-pub(super) async fn default_file_opener(path: PathBuf) -> Result<String, String> {
+pub(super) fn mime_type_for_path(path: &Path) -> Result<String, String> {
     let mime_output = Command::new("file")
         .args(["--mime-type", "-b"])
-        .arg(&path)
+        .arg(path)
         .output()
         .map_err(|error| {
             format!(
@@ -619,6 +619,11 @@ pub(super) async fn default_file_opener(path: PathBuf) -> Result<String, String>
     if mime.is_empty() {
         return Err(format!("No MIME type was returned for {}", path.display()));
     }
+    Ok(mime)
+}
+
+pub(super) async fn default_file_opener(path: PathBuf) -> Result<String, String> {
+    let mime = mime_type_for_path(&path)?;
 
     let application_output = Command::new("xdg-mime")
         .args(["query", "default", &mime])
@@ -665,6 +670,73 @@ pub(super) fn desktop_entry_name(application: &str) -> Option<String> {
         .ok()?;
     let name = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     (!name.is_empty()).then_some(name)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct AppChoice {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
+}
+
+fn apps_for_content_type(mime: &str) -> Vec<gio::AppInfo> {
+    gio::AppInfo::all_for_type(mime)
+        .into_iter()
+        .filter(|app| app.id().is_some())
+        .collect()
+}
+
+pub(super) async fn list_open_with_apps(path: PathBuf) -> Result<Vec<AppChoice>, String> {
+    let mime = mime_type_for_path(&path)?;
+    let default_id = gio::AppInfo::default_for_type(&mime, false).and_then(|app| app.id());
+    let mut choices: Vec<AppChoice> = apps_for_content_type(&mime)
+        .into_iter()
+        .map(|app| {
+            let id = app.id().expect("filtered for Some id").to_string();
+            let is_default = default_id
+                .as_ref()
+                .is_some_and(|default_id| default_id.as_str() == id);
+            AppChoice {
+                id,
+                name: app.name().to_string(),
+                is_default,
+            }
+        })
+        .collect();
+    choices.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    choices.dedup_by(|left, right| left.id == right.id);
+    Ok(choices)
+}
+
+pub(super) async fn open_with_app(path: PathBuf, app_id: String) -> Result<(), String> {
+    let mime = mime_type_for_path(&path)?;
+    let app = apps_for_content_type(&mime)
+        .into_iter()
+        .find(|app| app.id().is_some_and(|id| id.as_str() == app_id))
+        .ok_or_else(|| format!("{app_id} is no longer available"))?;
+    let file = gio::File::for_path(&path);
+    app.launch(&[file], gio::AppLaunchContext::NONE)
+        .map_err(|error| {
+            format!(
+                "Could not open {} with {}: {error}",
+                path.display(),
+                app.name()
+            )
+        })
+}
+
+pub(super) async fn set_default_app_for_path(path: PathBuf, app_id: String) -> Result<(), String> {
+    let mime = mime_type_for_path(&path)?;
+    let app = apps_for_content_type(&mime)
+        .into_iter()
+        .find(|app| app.id().is_some_and(|id| id.as_str() == app_id))
+        .ok_or_else(|| format!("{app_id} is no longer available"))?;
+    app.set_as_default_for_type(&mime).map_err(|error| {
+        format!(
+            "Could not set {} as the default for {mime}: {error}",
+            app.name()
+        )
+    })
 }
 
 #[cfg(target_os = "linux")]
