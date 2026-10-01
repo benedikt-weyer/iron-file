@@ -59,6 +59,11 @@ fn create_name_input_id() -> Id {
 }
 static BORDER_RADIUS: AtomicU8 = AtomicU8::new(6);
 
+/// `vendor/winit` is patched to drop its client-side-decoration fallback, so
+/// this only requests server-side decoration; the compositor's
+/// xdg-decoration choice decides the outcome either way.
+const SERVER_SIDE_ONLY_DECORATIONS: bool = true;
+
 fn shortcut_key_name(key: &keyboard::Key) -> Option<String> {
     match key.as_ref() {
         keyboard::Key::Named(key) => Some(format!("{key:?}")),
@@ -99,6 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .subscription(Gui::subscription)
     .window(window::Settings {
         transparent: true,
+        decorations: SERVER_SIDE_ONLY_DECORATIONS,
         platform_specific: window::settings::PlatformSpecific {
             // Must match iron-file.desktop so the desktop shell can resolve the dock icon.
             application_id: "iron-file".into(),

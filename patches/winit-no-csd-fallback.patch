@@ -1,0 +1,53 @@
+--- a/src/platform_impl/linux/wayland/window/state.rs	2026-10-01 17:02:01.250203709 +0200
++++ b/src/platform_impl/linux/wayland/window/state.rs	2026-10-01 17:07:27.116616000 +0200
+@@ -118,12 +118,17 @@
+     /// The inner size of the window, as in without client side decorations.
+     size: LogicalSize<u32>,
+ 
+-    /// Whether the CSD fail to create, so we don't try to create them on each iteration.
+-    csd_fails: bool,
+-
+     /// Whether we should decorate the frame.
+     decorate: bool,
+ 
++    /// Whether to draw a client-side decoration frame when the compositor
++    /// declines server-side decoration (`DecorationMode::Client`). Upstream
++    /// winit always does (`true`). Iron File has no titlebar/CSD of its own
++    /// and wants the compositor's xdg-decoration choice to be final, so this
++    /// fork defaults it to `false`: whether `attributes.decorations` is
++    /// `true` or `false`, a `Client` response simply means no decoration.
++    csd_fallback: bool,
++
+     /// Min size.
+     min_inner_size: LogicalSize<u32>,
+     max_inner_size: Option<LogicalSize<u32>>,
+@@ -188,11 +193,11 @@
+             blur_manager: winit_state.kwin_blur_manager.clone(),
+             compositor,
+             connection,
+-            csd_fails: false,
+             cursor_grab_mode: GrabState::new(),
+             selected_cursor: Default::default(),
+             cursor_visible: true,
+             decorate: true,
++            csd_fallback: false,
+             fractional_scale,
+             frame: None,
+             frame_callback_state: FrameCallbackState::None,
+@@ -278,7 +283,7 @@
+         if let Some(subcompositor) = subcompositor.as_ref().filter(|_| {
+             configure.decoration_mode == DecorationMode::Client
+                 && self.frame.is_none()
+-                && !self.csd_fails
++                && self.csd_fallback
+         }) {
+             match WinitFrame::new(
+                 &self.window,
+@@ -299,7 +304,6 @@
+                 },
+                 Err(err) => {
+                     warn!("Failed to create client side decorations frame: {err}");
+-                    self.csd_fails = true;
+                 },
+             }
+         } else if configure.decoration_mode == DecorationMode::Server {

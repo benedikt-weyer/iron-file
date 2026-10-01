@@ -102,12 +102,14 @@ change to one creates a per-user "overlay" profile
 rather than mutating it. Follow this overlay pattern for any new
 profile-editable setting.
 
-**Vendored/patched Iced.** `vendor/iced-graphics`, `vendor/iced-wgpu`, and
-`vendor/iced-widget` are patched forks selected via `[patch.crates-io]` in the
-root `Cargo.toml`. `patches/*.patch` document *why* (backdrop blur support for
-context menus, scroll-step/smooth-scroll APIs) — treat these as the crates to
-edit directly when touching rendering/scrolling behavior; the `.patch` files
-are for auditability/rebasing, not applied automatically.
+**Vendored/patched Iced, and winit.** `vendor/iced-graphics`, `vendor/iced-wgpu`,
+`vendor/iced-widget`, and `vendor/winit` are patched forks selected via
+`[patch.crates-io]` in the root `Cargo.toml`. `patches/*.patch` document *why*
+(backdrop blur support for context menus, scroll-step/smooth-scroll APIs, and
+dropping winit's Wayland CSD fallback so the compositor's xdg-decoration
+negotiation is the sole authority over window decoration) — treat these as the
+crates to edit directly when touching rendering/scrolling/decoration behavior;
+the `.patch` files are for auditability/rebasing, not applied automatically.
 
 **Config-driven UI surfaces.** Context-menu items (`ContextMenuItem`),
 quick-toolbar items (`QuickToolbarItem`), sort orders, and keyboard shortcuts
