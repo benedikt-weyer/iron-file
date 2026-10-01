@@ -1208,9 +1208,11 @@ impl Gui {
             }
             Message::FinishRectangleSelection => {
                 self.rectangle_selection = None;
-                self.dragging_entries = None;
                 self.pending_drag = None;
-                self.entry_drop_target = None;
+                if let Some(target) = self.entry_drop_target.take() {
+                    return self.drop_dragged_entries(target);
+                }
+                self.dragging_entries = None;
                 Task::none()
             }
             Message::BrowserScrolled(viewport) => {
