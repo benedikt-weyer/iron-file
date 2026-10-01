@@ -3718,7 +3718,6 @@ impl Gui {
                 })
             }
             Some(Payload::File(file)) => {
-                self.address = response.path;
                 self.content = file.content;
                 self.status = "File preview".into();
                 Task::none()
