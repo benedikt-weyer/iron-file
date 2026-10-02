@@ -668,4 +668,110 @@ impl Gui {
             .height(Length::Fill)
             .into()
     }
+
+    pub(super) fn accent_picker_button(&self, dark: bool) -> Element<'_, Message> {
+        let color = parse_color(if dark {
+            &self.dark_accent_input
+        } else {
+            &self.light_accent_input
+        })
+        .unwrap_or(Color::BLACK);
+        button(
+            row![
+                container(
+                    Space::new()
+                        .width(Length::Fixed(20.0))
+                        .height(Length::Fixed(20.0))
+                )
+                .style(move |_| iced::widget::container::Style::default().background(color)),
+                text(if dark {
+                    "Dark accent color"
+                } else {
+                    "Light accent color"
+                }),
+            ]
+            .spacing(8),
+        )
+        .on_press(Message::OpenAccentPicker(dark))
+        .into()
+    }
+
+    pub(super) fn preference_reset_button(&self, option: PreferenceOption) -> Element<'_, Message> {
+        if self.preference_matches_default(option) {
+            return Space::with_width(Length::Fixed(0.0)).into();
+        }
+        tooltip(
+            button(icon_text("rotate-ccw").size(16)).on_press(Message::ResetPreference(option)),
+            text("Reset to default"),
+            tooltip::Position::Bottom,
+        )
+        .into()
+    }
+
+    pub(super) fn preference_matches_default(&self, option: PreferenceOption) -> bool {
+        let browser = self.active_browser_settings();
+        let browser_defaults = iron_file_common::config::default_browser_settings();
+        let default_thumbnail_location = browser_defaults
+            .thumbnail_location
+            .to_str()
+            .and_then(|path| path.strip_prefix("~/"))
+            .and_then(|path| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(path)))
+            .unwrap_or_else(|| browser_defaults.thumbnail_location.clone());
+        let theme = self.active_theme_settings();
+        let theme_defaults = iron_file_common::config::default_theme_settings();
+        match option {
+            PreferenceOption::ColorMode => self.color_mode == ColorMode::default(),
+            PreferenceOption::LightAccent => {
+                theme.light_highlight == theme_defaults.light_highlight
+            }
+            PreferenceOption::DarkAccent => theme.dark_highlight == theme_defaults.dark_highlight,
+            PreferenceOption::BackgroundOpacity => {
+                theme.background_opacity == theme_defaults.background_opacity
+            }
+            PreferenceOption::ContextMenuBlurStrength => {
+                theme.context_menu_blur_strength == theme_defaults.context_menu_blur_strength
+            }
+            PreferenceOption::ContextMenuBlurKernelSize => {
+                theme.context_menu_blur_kernel_size == theme_defaults.context_menu_blur_kernel_size
+            }
+            PreferenceOption::BorderRadius => theme.border_radius == theme_defaults.border_radius,
+            PreferenceOption::Layout => browser.layout == browser_defaults.layout,
+            PreferenceOption::NameAlignment => {
+                browser.name_alignment == browser_defaults.name_alignment
+            }
+            PreferenceOption::SmoothScrolling => {
+                browser.smooth_scrolling == browser_defaults.smooth_scrolling
+            }
+            PreferenceOption::ScrollStep => browser.scroll_step == browser_defaults.scroll_step,
+            PreferenceOption::ItemSize => browser.item_size == browser_defaults.item_size,
+            PreferenceOption::MaxNameLines => {
+                browser.max_name_lines == browser_defaults.max_name_lines
+            }
+            PreferenceOption::Preview => {
+                browser.preview_enabled == browser_defaults.preview_enabled
+            }
+            PreferenceOption::SingleClickFolders => {
+                browser.single_click_opens_folders == browser_defaults.single_click_opens_folders
+            }
+            PreferenceOption::IconTheme => browser.icon_theme == browser_defaults.icon_theme,
+            PreferenceOption::ThumbnailLocation => {
+                browser.thumbnail_location == default_thumbnail_location
+            }
+            PreferenceOption::Terminal => {
+                browser.terminal_command == browser_defaults.terminal_command
+            }
+            PreferenceOption::FileContextMenuItems => {
+                browser.file_context_menu_items == browser_defaults.file_context_menu_items
+            }
+            PreferenceOption::FolderContextMenuItems => {
+                browser.folder_context_menu_items == browser_defaults.folder_context_menu_items
+            }
+            PreferenceOption::QuickToolbarItems => {
+                browser.quick_toolbar_items == browser_defaults.quick_toolbar_items
+            }
+            PreferenceOption::KeyboardShortcuts => {
+                browser.keyboard_shortcuts == browser_defaults.keyboard_shortcuts
+            }
+        }
+    }
 }
