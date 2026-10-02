@@ -105,24 +105,81 @@ pub async fn inspect_entry(path: PathBuf) -> Result<proto::EntryInfoResponse, St
         .map_err(|error| error.to_string())
 }
 
-pub async fn content_type(path: PathBuf) -> Result<String, String> {
-    let request = EntryInfoRequest {
-        path: path.display().to_string(),
-    };
-    let mut client = connect_or_start().await?;
-    match client.get_content_type(Request::new(request.clone())).await {
-        Ok(response) => Ok(response.into_inner().mime_type),
+/// Runs one RPC, restarting a stale backend once if it does not know the method yet.
+async fn call_with_restart<T, F, Fut>(mut call: F) -> Result<T, String>
+where
+    F: FnMut(FileBrowserClient<tonic::transport::Channel>) -> Fut,
+    Fut: std::future::Future<Output = Result<tonic::Response<T>, tonic::Status>>,
+{
+    let client = connect_or_start().await?;
+    match call(client).await {
+        Ok(response) => Ok(response.into_inner()),
         Err(error) if error.code() == tonic::Code::Unimplemented => {
             restart_backend().await?;
-            let mut client = connect_or_start().await?;
-            client
-                .get_content_type(Request::new(request))
+            let client = connect_or_start().await?;
+            call(client)
                 .await
-                .map(|response| response.into_inner().mime_type)
-                .map_err(|error| error.to_string())
+                .map(|response| response.into_inner())
+                .map_err(|error| error.message().to_owned())
         }
-        Err(error) => Err(error.to_string()),
+        Err(error) => Err(error.message().to_owned()),
     }
+}
+
+fn entry_request(path: &Path) -> EntryInfoRequest {
+    EntryInfoRequest {
+        path: path.display().to_string(),
+    }
+}
+
+pub async fn default_app(path: PathBuf) -> Result<proto::AppChoice, String> {
+    call_with_restart(|mut client| {
+        let request = entry_request(&path);
+        async move { client.get_default_app(Request::new(request)).await }
+    })
+    .await
+}
+
+pub async fn list_open_with_apps(path: PathBuf) -> Result<Vec<proto::AppChoice>, String> {
+    call_with_restart(|mut client| {
+        let request = entry_request(&path);
+        async move { client.list_open_with_apps(Request::new(request)).await }
+    })
+    .await
+    .map(|response| response.apps)
+}
+
+pub async fn open_file(path: PathBuf) -> Result<(), String> {
+    call_with_restart(|mut client| {
+        let request = entry_request(&path);
+        async move { client.open_file(Request::new(request)).await }
+    })
+    .await
+    .map(|_| ())
+}
+
+pub async fn open_with_app(path: PathBuf, app_id: String) -> Result<(), String> {
+    call_with_restart(|mut client| {
+        let request = proto::OpenWithRequest {
+            path: path.display().to_string(),
+            app_id: app_id.clone(),
+        };
+        async move { client.open_with_app(Request::new(request)).await }
+    })
+    .await
+    .map(|_| ())
+}
+
+pub async fn set_default_app(path: PathBuf, app_id: String) -> Result<(), String> {
+    call_with_restart(|mut client| {
+        let request = proto::OpenWithRequest {
+            path: path.display().to_string(),
+            app_id: app_id.clone(),
+        };
+        async move { client.set_default_app(Request::new(request)).await }
+    })
+    .await
+    .map(|_| ())
 }
 
 pub async fn copy_entries(

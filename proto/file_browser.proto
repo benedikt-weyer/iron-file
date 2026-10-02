@@ -8,7 +8,11 @@ service FileBrowser {
   rpc SearchDirectory(SearchDirectoryRequest) returns (SearchDirectoryResponse);
   rpc CreateThumbnail(ThumbnailRequest) returns (ThumbnailResponse);
   rpc InspectEntry(EntryInfoRequest) returns (EntryInfoResponse);
-  rpc GetContentType(EntryInfoRequest) returns (ContentTypeResponse);
+  rpc GetDefaultApp(EntryInfoRequest) returns (AppChoice);
+  rpc ListOpenWithApps(EntryInfoRequest) returns (ListOpenWithAppsResponse);
+  rpc OpenFile(EntryInfoRequest) returns (OpenWithResponse);
+  rpc OpenWithApp(OpenWithRequest) returns (OpenWithResponse);
+  rpc SetDefaultApp(OpenWithRequest) returns (OpenWithResponse);
   rpc CopyEntries(FileCommandRequest) returns (FileCommandResponse);
   rpc DeleteEntries(DeleteEntriesRequest) returns (FileCommandResponse);
   rpc CreateSymlinks(FileCommandRequest) returns (FileCommandResponse);
@@ -71,9 +75,22 @@ message EntryInfoResponse {
   repeated EntryInfoField fields = 2;
 }
 
-message ContentTypeResponse {
-  string mime_type = 1;
+message AppChoice {
+  string id = 1;
+  string name = 2;
+  bool is_default = 3;
 }
+
+message ListOpenWithAppsResponse {
+  repeated AppChoice apps = 1;
+}
+
+message OpenWithRequest {
+  string path = 1;
+  string app_id = 2;
+}
+
+message OpenWithResponse {}
 
 message FileCommandRequest {
   repeated string sources = 1;

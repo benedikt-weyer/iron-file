@@ -7,6 +7,8 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+mod apps;
+
 use fs2::FileExt;
 use hayro::vello_cpu::color::palette::css::WHITE;
 use hayro::{RenderCache, RenderSettings, render};
@@ -27,32 +29,22 @@ use tonic::{Request, Response, Status, transport::Server};
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::FileOptions};
 
 use proto::{
-    BrowseResponse, BrowserError, ContentTypeResponse, CreateEntryRequest, DeleteEntriesRequest,
-    Directory, EntryInfoField, EntryInfoRequest, EntryInfoResponse, FileCommandRequest,
-    FileCommandResponse, FileContent, FileEntry, ListDirectoryRequest, LogEntry, LogStreamRequest,
-    OpenPathRequest, RenameEntryRequest, SearchDirectoryRequest, SearchDirectoryResponse,
-    ThumbnailRequest, ThumbnailResponse,
+    AppChoice, BrowseResponse, BrowserError, CreateEntryRequest, DeleteEntriesRequest, Directory,
+    EntryInfoField, EntryInfoRequest, EntryInfoResponse, FileCommandRequest, FileCommandResponse,
+    FileContent, FileEntry, ListDirectoryRequest, ListOpenWithAppsResponse, LogEntry,
+    LogStreamRequest, OpenPathRequest, OpenWithRequest, OpenWithResponse, RenameEntryRequest,
+    SearchDirectoryRequest, SearchDirectoryResponse, ThumbnailRequest, ThumbnailResponse,
     browse_response::Payload,
     file_browser_server::{FileBrowser, FileBrowserServer},
 };
 
-fn content_type_for_path(path: &Path) -> Result<String, String> {
-    use gio::prelude::*;
-    let info = gio::File::for_path(path)
-        .query_info(
-            gio::FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
-            gio::FileQueryInfoFlags::NONE,
-            gio::Cancellable::NONE,
-        )
-        .map_err(|error| {
-            format!(
-                "Could not determine the type of {}: {error}",
-                path.display()
-            )
-        })?;
-    info.content_type()
-        .map(|mime| mime.to_string())
-        .ok_or_else(|| format!("No MIME type was returned for {}", path.display()))
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, Status> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|error| Status::internal(error.to_string()))?
+        .map_err(Status::failed_precondition)
 }
 
 const MAX_PREVIEW_BYTES: u64 = 1_000_000;
@@ -160,16 +152,67 @@ impl FileBrowser for FileBrowserService {
             .map_err(Status::internal)
     }
 
-    async fn get_content_type(
+    async fn get_default_app(
         &self,
         request: Request<EntryInfoRequest>,
-    ) -> Result<Response<ContentTypeResponse>, Status> {
+    ) -> Result<Response<AppChoice>, Status> {
         let path = PathBuf::from(request.into_inner().path);
-        tokio::task::spawn_blocking(move || content_type_for_path(&path))
+        blocking(move || apps::default_app(&path))
             .await
-            .map_err(|error| Status::internal(error.to_string()))?
-            .map(|mime_type| Response::new(ContentTypeResponse { mime_type }))
-            .map_err(Status::internal)
+            .map(Response::new)
+    }
+
+    async fn list_open_with_apps(
+        &self,
+        request: Request<EntryInfoRequest>,
+    ) -> Result<Response<ListOpenWithAppsResponse>, Status> {
+        let path = PathBuf::from(request.into_inner().path);
+        blocking(move || apps::list_apps(&path))
+            .await
+            .map(|apps| Response::new(ListOpenWithAppsResponse { apps }))
+    }
+
+    async fn open_file(
+        &self,
+        request: Request<EntryInfoRequest>,
+    ) -> Result<Response<OpenWithResponse>, Status> {
+        let path = PathBuf::from(request.into_inner().path);
+        self.log(format!("Opening {}", path.display()));
+        blocking(move || apps::open_default(&path))
+            .await
+            .map(|()| Response::new(OpenWithResponse {}))
+    }
+
+    async fn open_with_app(
+        &self,
+        request: Request<OpenWithRequest>,
+    ) -> Result<Response<OpenWithResponse>, Status> {
+        let request = request.into_inner();
+        let path = PathBuf::from(request.path);
+        self.log(format!(
+            "Opening {} with {}",
+            path.display(),
+            request.app_id
+        ));
+        blocking(move || apps::open_with(&path, &request.app_id))
+            .await
+            .map(|()| Response::new(OpenWithResponse {}))
+    }
+
+    async fn set_default_app(
+        &self,
+        request: Request<OpenWithRequest>,
+    ) -> Result<Response<OpenWithResponse>, Status> {
+        let request = request.into_inner();
+        let path = PathBuf::from(request.path);
+        self.log(format!(
+            "Setting {} as default for {}",
+            request.app_id,
+            path.display()
+        ));
+        blocking(move || apps::set_default(&path, &request.app_id))
+            .await
+            .map(|()| Response::new(OpenWithResponse {}))
     }
 
     async fn copy_entries(

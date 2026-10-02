@@ -463,17 +463,7 @@ pub(super) async fn mount_drive(path: PathBuf) -> Result<MountState, String> {
 }
 
 pub(super) async fn open_file(path: PathBuf) -> Result<(), String> {
-    let mime = iron_file_common::content_type(path.clone()).await?;
-    let app = gio::AppInfo::default_for_type(&mime, false)
-        .ok_or_else(|| format!("No default application is configured for {mime}"))?;
-    app.launch(&[gio::File::for_path(&path)], gio::AppLaunchContext::NONE)
-        .map_err(|error| {
-            format!(
-                "Could not open {} with {}: {error}",
-                path.display(),
-                app.name()
-            )
-        })
+    iron_file_common::open_file(path).await
 }
 
 pub(super) async fn open_terminal(path: PathBuf, configured_command: String) -> Result<(), String> {
@@ -599,11 +589,9 @@ pub(super) fn terminal_command_is_available(command: &str) -> bool {
 }
 
 pub(super) async fn default_file_opener(path: PathBuf) -> Result<String, String> {
-    let mime = iron_file_common::content_type(path.clone()).await?;
-
-    gio::AppInfo::default_for_type(&mime, false)
-        .map(|app| app.name().to_string())
-        .ok_or_else(|| format!("No default application is configured for {mime}"))
+    iron_file_common::default_app(path)
+        .await
+        .map(|app| app.name)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -613,64 +601,26 @@ pub(super) struct AppChoice {
     pub is_default: bool,
 }
 
-fn apps_for_content_type(mime: &str) -> Vec<gio::AppInfo> {
-    gio::AppInfo::all_for_type(mime)
-        .into_iter()
-        .filter(|app| app.id().is_some())
-        .collect()
-}
-
 pub(super) async fn list_open_with_apps(path: PathBuf) -> Result<Vec<AppChoice>, String> {
-    let mime = iron_file_common::content_type(path.clone()).await?;
-    let default_id = gio::AppInfo::default_for_type(&mime, false).and_then(|app| app.id());
-    let mut choices: Vec<AppChoice> = apps_for_content_type(&mime)
-        .into_iter()
-        .map(|app| {
-            let id = app.id().expect("filtered for Some id").to_string();
-            let is_default = default_id
-                .as_ref()
-                .is_some_and(|default_id| default_id.as_str() == id);
-            AppChoice {
-                id,
-                name: app.name().to_string(),
-                is_default,
-            }
+    iron_file_common::list_open_with_apps(path)
+        .await
+        .map(|apps| {
+            apps.into_iter()
+                .map(|app| AppChoice {
+                    id: app.id,
+                    name: app.name,
+                    is_default: app.is_default,
+                })
+                .collect()
         })
-        .collect();
-    choices.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
-    choices.dedup_by(|left, right| left.id == right.id);
-    Ok(choices)
 }
 
 pub(super) async fn open_with_app(path: PathBuf, app_id: String) -> Result<(), String> {
-    let mime = iron_file_common::content_type(path.clone()).await?;
-    let app = apps_for_content_type(&mime)
-        .into_iter()
-        .find(|app| app.id().is_some_and(|id| id.as_str() == app_id))
-        .ok_or_else(|| format!("{app_id} is no longer available"))?;
-    let file = gio::File::for_path(&path);
-    app.launch(&[file], gio::AppLaunchContext::NONE)
-        .map_err(|error| {
-            format!(
-                "Could not open {} with {}: {error}",
-                path.display(),
-                app.name()
-            )
-        })
+    iron_file_common::open_with_app(path, app_id).await
 }
 
 pub(super) async fn set_default_app_for_path(path: PathBuf, app_id: String) -> Result<(), String> {
-    let mime = iron_file_common::content_type(path.clone()).await?;
-    let app = apps_for_content_type(&mime)
-        .into_iter()
-        .find(|app| app.id().is_some_and(|id| id.as_str() == app_id))
-        .ok_or_else(|| format!("{app_id} is no longer available"))?;
-    app.set_as_default_for_type(&mime).map_err(|error| {
-        format!(
-            "Could not set {} as the default for {mime}: {error}",
-            app.name()
-        )
-    })
+    iron_file_common::set_default_app(path, app_id).await
 }
 
 #[cfg(target_os = "linux")]
