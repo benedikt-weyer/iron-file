@@ -463,15 +463,17 @@ pub(super) async fn mount_drive(path: PathBuf) -> Result<MountState, String> {
 }
 
 pub(super) async fn open_file(path: PathBuf) -> Result<(), String> {
-    let status = Command::new("xdg-open")
-        .arg(&path)
-        .status()
-        .map_err(|error| format!("Could not open {}: {error}", path.display()))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("xdg-open could not open {}", path.display()))
-    }
+    let mime = mime_type_for_path(&path)?;
+    let app = gio::AppInfo::default_for_type(&mime, false)
+        .ok_or_else(|| format!("No default application is configured for {mime}"))?;
+    app.launch(&[gio::File::for_path(&path)], gio::AppLaunchContext::NONE)
+        .map_err(|error| {
+            format!(
+                "Could not open {} with {}: {error}",
+                path.display(),
+                app.name()
+            )
+        })
 }
 
 pub(super) async fn open_terminal(path: PathBuf, configured_command: String) -> Result<(), String> {
@@ -597,79 +599,29 @@ pub(super) fn terminal_command_is_available(command: &str) -> bool {
 }
 
 pub(super) fn mime_type_for_path(path: &Path) -> Result<String, String> {
-    let mime_output = Command::new("file")
-        .args(["--mime-type", "-b"])
-        .arg(path)
-        .output()
+    let info = gio::File::for_path(path)
+        .query_info(
+            gio::FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
+            gio::FileQueryInfoFlags::NONE,
+            gio::Cancellable::NONE,
+        )
         .map_err(|error| {
             format!(
                 "Could not determine the type of {}: {error}",
                 path.display()
             )
         })?;
-    if !mime_output.status.success() {
-        return Err(format!(
-            "Could not determine the type of {}",
-            path.display()
-        ));
-    }
-    let mime = String::from_utf8_lossy(&mime_output.stdout)
-        .trim()
-        .to_owned();
-    if mime.is_empty() {
-        return Err(format!("No MIME type was returned for {}", path.display()));
-    }
-    Ok(mime)
+    info.content_type()
+        .map(|mime| mime.to_string())
+        .ok_or_else(|| format!("No MIME type was returned for {}", path.display()))
 }
 
 pub(super) async fn default_file_opener(path: PathBuf) -> Result<String, String> {
     let mime = mime_type_for_path(&path)?;
 
-    let application_output = Command::new("xdg-mime")
-        .args(["query", "default", &mime])
-        .output()
-        .map_err(|error| format!("Could not find an application for {mime}: {error}"))?;
-    if !application_output.status.success() {
-        return Err(format!("Could not find an application for {mime}"));
-    }
-    let application = String::from_utf8_lossy(&application_output.stdout)
-        .trim()
-        .to_owned();
-    if application.is_empty() {
-        Err(format!("No default application is configured for {mime}"))
-    } else {
-        Ok(desktop_entry_name(&application).unwrap_or(application))
-    }
-}
-
-pub(super) fn desktop_entry_name(application: &str) -> Option<String> {
-    let home = std::env::var_os("HOME")?;
-    let user = std::env::var_os("USER")?;
-    let output = Command::new("find")
-        .arg(PathBuf::from(&home).join(".local/share/applications"))
-        .arg(PathBuf::from(&home).join(".nix-profile/share/applications"))
-        .arg(
-            PathBuf::from("/etc/profiles/per-user")
-                .join(user)
-                .join("share/applications"),
-        )
-        .arg("/run/current-system/sw/share/applications")
-        .args([
-            "-name",
-            application,
-            "-exec",
-            "awk",
-            "-F=",
-            "/^Name=/{print substr($0,6); exit}",
-            "{}",
-            ";",
-            "-quit",
-        ])
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    let name = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    (!name.is_empty()).then_some(name)
+    gio::AppInfo::default_for_type(&mime, false)
+        .map(|app| app.name().to_string())
+        .ok_or_else(|| format!("No default application is configured for {mime}"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
