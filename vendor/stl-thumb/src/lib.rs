@@ -82,13 +82,26 @@ fn create_headless_display(config: &Config) -> Result<glium::HeadlessRenderer, B
     let event_loop: EventLoop<()> = EventLoopBuilder::new().with_any_thread(true).build();
     let size = PhysicalSize::new(config.width, config.height);
     let cb = glutin::ContextBuilder::new();
-    let context = cb.build_headless(&event_loop, size)?;
+    let context = cb.build_headless(event_loop, size)?;
 
     let context = unsafe { context.treat_as_current() };
     let display = glium::backend::glutin::headless::Headless::new(context)?;
     print_context_info(&display);
     Ok(display)
 }
+
+/// winit allows only one `EventLoop` per process, so it is created once and shared.
+#[cfg(target_os = "linux")]
+struct SharedEventLoop(EventLoop<()>);
+
+// SAFETY: the loop is only used while holding the mutex, and it is created with
+// `with_any_thread(true)`, so it may be driven from whichever thread holds the lock.
+#[cfg(target_os = "linux")]
+unsafe impl Send for SharedEventLoop {}
+
+#[cfg(target_os = "linux")]
+static EVENT_LOOP: std::sync::OnceLock<Option<std::sync::Mutex<SharedEventLoop>>> =
+    std::sync::OnceLock::new();
 
 #[cfg(target_os = "linux")]
 fn create_headless_display(config: &Config) -> Result<glium::HeadlessRenderer, Box<dyn Error>> {
@@ -103,16 +116,21 @@ fn create_headless_display(config: &Config) -> Result<glium::HeadlessRenderer, B
     // If there is no X server or Wayland, creating the event loop will fail first.
     // If this happens we catch the panic and fall back to osmesa software rendering, which doesn't require an event loop.
     // TODO: Submit PR upstream to stop panicing
-    let event_loop_result: Result<EventLoop<()>, _> =
-        panic::catch_unwind(|| EventLoopBuilder::new().with_any_thread(true).build());
+    let event_loop = EVENT_LOOP.get_or_init(|| {
+        panic::catch_unwind(|| EventLoopBuilder::new().with_any_thread(true).build())
+            .ok()
+            .map(|event_loop| std::sync::Mutex::new(SharedEventLoop(event_loop)))
+    });
 
-    match event_loop_result {
-        Ok(event_loop) => {
+    match event_loop {
+        Some(event_loop) => {
+            let event_loop = event_loop.lock().unwrap_or_else(|error| error.into_inner());
+            let event_loop = &event_loop.0;
             context = {
                 // Try surfaceless, headless, and osmesa in that order
                 // This is the procedure recommended in
                 // https://github.com/rust-windowing/glutin/blob/bab33a84dfb094ff65c059400bed7993434638e2/glutin_examples/examples/headless.rs
-                match cb.clone().build_surfaceless(&event_loop) {
+                match cb.clone().build_surfaceless(event_loop) {
                     Ok(c) => c,
                     Err(e) => {
                         warn!("Unable to create surfaceless GL context. Trying headless instead. Reason: {:?}", e);
@@ -127,11 +145,8 @@ fn create_headless_display(config: &Config) -> Result<glium::HeadlessRenderer, B
                 }
             };
         }
-        Err(e) => {
-            warn!(
-                "No Wayland or X server. Falling back to osmesa software rendering. Reason {:?}",
-                e
-            );
+        None => {
+            warn!("No Wayland or X server. Falling back to osmesa software rendering.");
             context = cb.build_osmesa(size)?;
         }
     };
@@ -512,6 +527,15 @@ mod tests {
     use super::*;
     use std::fs;
     use std::io::ErrorKind;
+
+    #[test]
+    fn cube_fixtures_load_as_twelve_triangles() {
+        for file in ["cube.stl", "cube.obj", "cube.3mf"] {
+            let mesh = mesh::Mesh::load(&format!("test_data/{file}"), false)
+                .unwrap_or_else(|error| panic!("{file} failed to load: {error}"));
+            assert_eq!(mesh.vertices.len(), 36, "{file} should have 12 triangles");
+        }
+    }
 
     #[test]
     fn cube_stl() {
