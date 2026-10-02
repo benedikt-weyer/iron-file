@@ -1,35 +1,39 @@
 {
   lib,
   self,
+  craneLib,
+  src,
   gtk4,
   makeWrapper,
   pkg-config,
-  rustPlatform,
   wrapGAppsHook4,
 }:
 
-rustPlatform.buildRustPackage {
-  pname = "iron-file-gtk";
-  version = "0.1.0";
+let
+  commonArgs = {
+    pname = "iron-file-gtk";
+    version = "0.1.0";
+    inherit src;
+    strictDeps = true;
 
-  src = self;
+    cargoExtraArgs = "--package iron-file-gtk --package iron-file-backend";
 
-  cargoLock.lockFile = "${self}/Cargo.lock";
+    nativeBuildInputs = [
+      pkg-config
+      wrapGAppsHook4
+    ];
 
-  cargoBuildFlags = [
-    "--package"
-    "iron-file-gtk"
-    "--package"
-    "iron-file-backend"
-  ];
+    buildInputs = [ gtk4 ];
 
-  nativeBuildInputs = [
-    makeWrapper
-    pkg-config
-    wrapGAppsHook4
-  ];
+    doCheck = false;
+  };
 
-  buildInputs = [ gtk4 ];
+  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+in
+craneLib.buildPackage (commonArgs // {
+  inherit cargoArtifacts;
+
+  nativeBuildInputs = commonArgs.nativeBuildInputs ++ [ makeWrapper ];
 
   postInstall = ''
     install -Dm755 "$out/bin/iron-file-backend" \
@@ -43,8 +47,6 @@ rustPlatform.buildRustPackage {
       --set IRON_FILE_BACKEND_BIN "$out/libexec/iron-file/iron-file-backend"
   '';
 
-  doCheck = false;
-
   meta = {
     description = "File browser built with GTK4";
     homepage = "https://github.com/benedikt-weyer/iron-file";
@@ -52,4 +54,4 @@ rustPlatform.buildRustPackage {
     mainProgram = "iron-file-gtk";
     platforms = lib.platforms.linux;
   };
-}
+})

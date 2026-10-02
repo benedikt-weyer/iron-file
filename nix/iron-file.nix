@@ -1,6 +1,8 @@
 {
   lib,
   self,
+  craneLib,
+  src,
   libGL,
   libX11,
   libXcursor,
@@ -16,40 +18,46 @@
   makeWrapper,
   makeDesktopItem,
   pkg-config,
-  rustPlatform,
   vulkan-loader,
   wayland,
 }:
 
-rustPlatform.buildRustPackage {
-  pname = "iron-file";
-  version = "0.1.0";
+let
+  commonArgs = {
+    pname = "iron-file";
+    version = "0.1.0";
+    inherit src;
+    strictDeps = true;
 
-  src = self;
+    env.CMAKE_POLICY_VERSION_MINIMUM = "3.5";
 
-  cargoLock.lockFile = "${self}/Cargo.lock";
+    cargoExtraArgs = lib.concatStringsSep " " [
+      "--package iron-file-iced"
+      "--package iron-file-backend"
+      "--package xdg-desktop-portal-iron-file"
+    ];
 
-  env.CMAKE_POLICY_VERSION_MINIMUM = "3.5";
+    nativeBuildInputs = [
+      cmake
+      pkg-config
+    ];
 
-  cargoBuildFlags = [
-    "--package"
-    "iron-file-iced"
-    "--package"
-    "iron-file-backend"
-    "--package"
-    "xdg-desktop-portal-iron-file"
-  ];
+    buildInputs = [
+      fontconfig
+      glib
+    ];
 
-  nativeBuildInputs = [
-    cmake
+    doCheck = false;
+  };
+
+  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+in
+craneLib.buildPackage (commonArgs // {
+  inherit cargoArtifacts;
+
+  nativeBuildInputs = commonArgs.nativeBuildInputs ++ [
     copyDesktopItems
     makeWrapper
-    pkg-config
-  ];
-
-  buildInputs = [
-    fontconfig
-    glib
   ];
 
   desktopItems = [
@@ -117,8 +125,6 @@ EOF
       --set IRON_FILE_BIN "$out/bin/iron-file-iced"
   '';
 
-  doCheck = false;
-
   meta = {
     description = "File browser built with Iced";
     homepage = "https://github.com/benedikt-weyer/iron-file";
@@ -126,4 +132,4 @@ EOF
     mainProgram = "iron-file";
     platforms = lib.platforms.linux;
   };
-}
+})

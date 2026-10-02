@@ -2,8 +2,9 @@
   description = "Development environment for Iron File GUI applications";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.crane.url = "github:ipetkov/crane";
 
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, crane }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
@@ -48,9 +49,11 @@
       packages = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
+          craneLib = crane.mkLib pkgs;
+          src = import ./nix/source.nix { inherit (pkgs) lib; inherit craneLib self; };
         in {
-          iron-file = pkgs.callPackage ./nix/iron-file.nix { inherit self; };
-          iron-file-gtk = pkgs.callPackage ./nix/iron-file-gtk.nix { inherit self; };
+          iron-file = pkgs.callPackage ./nix/iron-file.nix { inherit self craneLib src; };
+          iron-file-gtk = pkgs.callPackage ./nix/iron-file-gtk.nix { inherit self craneLib src; };
           default = self.packages.${system}.iron-file;
         });
     };
