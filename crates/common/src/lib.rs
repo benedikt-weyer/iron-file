@@ -105,6 +105,26 @@ pub async fn inspect_entry(path: PathBuf) -> Result<proto::EntryInfoResponse, St
         .map_err(|error| error.to_string())
 }
 
+pub async fn content_type(path: PathBuf) -> Result<String, String> {
+    let request = EntryInfoRequest {
+        path: path.display().to_string(),
+    };
+    let mut client = connect_or_start().await?;
+    match client.get_content_type(Request::new(request.clone())).await {
+        Ok(response) => Ok(response.into_inner().mime_type),
+        Err(error) if error.code() == tonic::Code::Unimplemented => {
+            restart_backend().await?;
+            let mut client = connect_or_start().await?;
+            client
+                .get_content_type(Request::new(request))
+                .await
+                .map(|response| response.into_inner().mime_type)
+                .map_err(|error| error.to_string())
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 pub async fn copy_entries(
     sources: Vec<PathBuf>,
     destination: PathBuf,

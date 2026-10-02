@@ -8,6 +8,7 @@ service FileBrowser {
   rpc SearchDirectory(SearchDirectoryRequest) returns (SearchDirectoryResponse);
   rpc CreateThumbnail(ThumbnailRequest) returns (ThumbnailResponse);
   rpc InspectEntry(EntryInfoRequest) returns (EntryInfoResponse);
+  rpc GetContentType(EntryInfoRequest) returns (ContentTypeResponse);
   rpc CopyEntries(FileCommandRequest) returns (FileCommandResponse);
   rpc DeleteEntries(DeleteEntriesRequest) returns (FileCommandResponse);
   rpc CreateSymlinks(FileCommandRequest) returns (FileCommandResponse);
@@ -68,6 +69,10 @@ message EntryInfoField {
 message EntryInfoResponse {
   string name = 1;
   repeated EntryInfoField fields = 2;
+}
+
+message ContentTypeResponse {
+  string mime_type = 1;
 }
 
 message FileCommandRequest {

@@ -3160,6 +3160,7 @@ name = "iron-file-backend"
 version = "0.1.0"
 dependencies = [
  "fs2",
+ "gio",
  "hayro",
  "image",
  "iron-file-common",

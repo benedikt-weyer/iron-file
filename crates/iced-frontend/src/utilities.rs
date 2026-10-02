@@ -463,7 +463,7 @@ pub(super) async fn mount_drive(path: PathBuf) -> Result<MountState, String> {
 }
 
 pub(super) async fn open_file(path: PathBuf) -> Result<(), String> {
-    let mime = mime_type_for_path(&path)?;
+    let mime = iron_file_common::content_type(path.clone()).await?;
     let app = gio::AppInfo::default_for_type(&mime, false)
         .ok_or_else(|| format!("No default application is configured for {mime}"))?;
     app.launch(&[gio::File::for_path(&path)], gio::AppLaunchContext::NONE)
@@ -598,26 +598,8 @@ pub(super) fn terminal_command_is_available(command: &str) -> bool {
     })
 }
 
-pub(super) fn mime_type_for_path(path: &Path) -> Result<String, String> {
-    let info = gio::File::for_path(path)
-        .query_info(
-            gio::FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
-            gio::FileQueryInfoFlags::NONE,
-            gio::Cancellable::NONE,
-        )
-        .map_err(|error| {
-            format!(
-                "Could not determine the type of {}: {error}",
-                path.display()
-            )
-        })?;
-    info.content_type()
-        .map(|mime| mime.to_string())
-        .ok_or_else(|| format!("No MIME type was returned for {}", path.display()))
-}
-
 pub(super) async fn default_file_opener(path: PathBuf) -> Result<String, String> {
-    let mime = mime_type_for_path(&path)?;
+    let mime = iron_file_common::content_type(path.clone()).await?;
 
     gio::AppInfo::default_for_type(&mime, false)
         .map(|app| app.name().to_string())
@@ -639,7 +621,7 @@ fn apps_for_content_type(mime: &str) -> Vec<gio::AppInfo> {
 }
 
 pub(super) async fn list_open_with_apps(path: PathBuf) -> Result<Vec<AppChoice>, String> {
-    let mime = mime_type_for_path(&path)?;
+    let mime = iron_file_common::content_type(path.clone()).await?;
     let default_id = gio::AppInfo::default_for_type(&mime, false).and_then(|app| app.id());
     let mut choices: Vec<AppChoice> = apps_for_content_type(&mime)
         .into_iter()
@@ -661,7 +643,7 @@ pub(super) async fn list_open_with_apps(path: PathBuf) -> Result<Vec<AppChoice>,
 }
 
 pub(super) async fn open_with_app(path: PathBuf, app_id: String) -> Result<(), String> {
-    let mime = mime_type_for_path(&path)?;
+    let mime = iron_file_common::content_type(path.clone()).await?;
     let app = apps_for_content_type(&mime)
         .into_iter()
         .find(|app| app.id().is_some_and(|id| id.as_str() == app_id))
@@ -678,7 +660,7 @@ pub(super) async fn open_with_app(path: PathBuf, app_id: String) -> Result<(), S
 }
 
 pub(super) async fn set_default_app_for_path(path: PathBuf, app_id: String) -> Result<(), String> {
-    let mime = mime_type_for_path(&path)?;
+    let mime = iron_file_common::content_type(path.clone()).await?;
     let app = apps_for_content_type(&mime)
         .into_iter()
         .find(|app| app.id().is_some_and(|id| id.as_str() == app_id))
