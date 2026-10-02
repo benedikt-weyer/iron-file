@@ -79,6 +79,17 @@ archive compression/extraction (`zip`), and text-file previews (capped at
 `MAX_PREVIEW_BYTES` = 1 MB) entirely server-side; frontends never touch the
 filesystem directly except through the gRPC client in `iron-file-common`.
 
+**Default-app lookup and launching also live in the backend.**
+`crates/backend/src/apps.rs` uses GIO (`gio::AppInfo`) to resolve a file's content
+type and default app, list "Open with…" candidates, launch an app, and set the
+default; the `GetDefaultApp`, `ListOpenWithApps`, `OpenFile`, `OpenWithApp` and
+`SetDefaultApp` RPCs expose it. One GIO source keeps the open action, the
+"Open with" label and the default star consistent, so don't reintroduce `file`,
+`xdg-mime` or `xdg-open`. Caveat: launched apps inherit the *backend's*
+environment (`WAYLAND_DISPLAY`, `DBUS_SESSION_BUS_ADDRESS`), not the clicking
+frontend's, which matters if the singleton was started from another session. The
+Iced frontend keeps `gio` only for icon names.
+
 **Picker mode is the same Iced binary, not a separate tool.** `iron-file-iced
 --mode picker [--file|--folder] [--single|--multiple] [--save-name NAME]`
 stays attached to the invoking terminal, writes selected paths to stdout (one
