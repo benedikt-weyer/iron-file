@@ -103,9 +103,50 @@ unsafe impl Send for SharedEventLoop {}
 static EVENT_LOOP: std::sync::OnceLock<Option<std::sync::Mutex<SharedEventLoop>>> =
     std::sync::OnceLock::new();
 
+/// Returns the shared event loop, creating it on first use. `None` means there is no
+/// Wayland or X server (creating the loop panics in that case, which is caught here).
+#[cfg(target_os = "linux")]
+fn shared_event_loop() -> Option<&'static std::sync::Mutex<SharedEventLoop>> {
+    use glium::glutin::platform::unix::EventLoopBuilderExtUnix;
+
+    EVENT_LOOP
+        .get_or_init(|| {
+            panic::catch_unwind(|| EventLoopBuilder::new().with_any_thread(true).build())
+                .ok()
+                .map(|event_loop| std::sync::Mutex::new(SharedEventLoop(event_loop)))
+        })
+        .as_ref()
+}
+
+/// Fallback when no headless GL context could be created: a window on the shared event
+/// loop. Returns an error instead of panicking when there is no display server.
+#[cfg(target_os = "linux")]
+fn create_fallback_display(config: &Config) -> Result<glium::Display, Box<dyn Error>> {
+    let event_loop = shared_event_loop().ok_or("No Wayland or X server available")?;
+    let event_loop = event_loop.lock().unwrap_or_else(|error| error.into_inner());
+    let window_dim = PhysicalSize::new(config.width, config.height);
+    let window = glutin::window::WindowBuilder::new()
+        .with_title("stl-thumb")
+        .with_inner_size(window_dim)
+        .with_min_inner_size(window_dim)
+        .with_max_inner_size(window_dim)
+        .with_visible(config.visible);
+    let cb = glutin::ContextBuilder::new().with_depth_buffer(24);
+    let display = glium::Display::new(window, cb, &event_loop.0)?;
+    print_context_info(&display);
+    Ok(display)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn create_fallback_display(config: &Config) -> Result<glium::Display, Box<dyn Error>> {
+    panic::catch_unwind(|| create_normal_display(config))
+        .map_err(|_| "Unable to create a display")?
+        .map(|(display, _)| display)
+}
+
 #[cfg(target_os = "linux")]
 fn create_headless_display(config: &Config) -> Result<glium::HeadlessRenderer, Box<dyn Error>> {
-    use glium::glutin::platform::unix::{EventLoopBuilderExtUnix, HeadlessContextExt};
+    use glium::glutin::platform::unix::HeadlessContextExt;
 
     let size = PhysicalSize::new(config.width, config.height);
     let cb = glutin::ContextBuilder::new();
@@ -116,11 +157,7 @@ fn create_headless_display(config: &Config) -> Result<glium::HeadlessRenderer, B
     // If there is no X server or Wayland, creating the event loop will fail first.
     // If this happens we catch the panic and fall back to osmesa software rendering, which doesn't require an event loop.
     // TODO: Submit PR upstream to stop panicing
-    let event_loop = EVENT_LOOP.get_or_init(|| {
-        panic::catch_unwind(|| EventLoopBuilder::new().with_any_thread(true).build())
-            .ok()
-            .map(|event_loop| std::sync::Mutex::new(SharedEventLoop(event_loop)))
-    });
+    let event_loop = shared_event_loop();
 
     match event_loop {
         Some(event_loop) => {
@@ -365,7 +402,7 @@ pub fn render_to_image(config: &Config) -> Result<image::DynamicImage, Box<dyn E
                 "Unable to create headless GL context. Trying hidden window instead. Reason: {:?}",
                 e
             );
-            let (display, _) = create_normal_display(config)?;
+            let display = create_fallback_display(config)?;
             let texture = glium::Texture2d::empty(&display, config.width, config.height).unwrap();
             let depthtexture =
                 glium::texture::DepthTexture2d::empty(&display, config.width, config.height)
