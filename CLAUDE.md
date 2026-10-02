@@ -34,7 +34,7 @@ PATH) to see this list from the shell itself.
 cargo check --workspace          # type-check everything
 cargo build --workspace          # build everything
 cargo test --workspace           # run all tests
-cargo test -p iron-file-common   # test one crate (config.rs has the bulk of unit tests)
+cargo test -p iron-file-common   # test one crate (config/tests.rs has the bulk of unit tests)
 cargo fmt / cargo fmt --check    # format / verify formatting
 ```
 
@@ -103,11 +103,11 @@ changing picker semantics — those docs are user-facing and must stay in sync
 with `crates/iced-frontend/src/main.rs` argument parsing.
 
 **Configuration is a profile system, not a flat settings file.**
-`crates/common/src/config.rs` (`ConfigStore`) loads TOML profiles from
+`crates/common/src/config/` (`ConfigStore` in `store.rs`) loads TOML profiles from
 `$XDG_CONFIG_HOME/iron-file/profiles/*.toml` plus system dirs under
 `$XDG_CONFIG_DIRS`, each optionally inheriting from a `base_profile`. Missing
 fields fall back through `config/default.toml`, embedded via `include_str!`
-in `config.rs`. Read-only (system) profiles can't be edited in place: saving a
+in `config/mod.rs`. Read-only (system) profiles can't be edited in place: saving a
 change to one creates a per-user "overlay" profile
 (`<stem>-override-<hash>.toml`) with `base_profile` pointing at the original,
 rather than mutating it. Follow this overlay pattern for any new
@@ -124,7 +124,7 @@ the `.patch` files are for auditability/rebasing, not applied automatically.
 
 **Config-driven UI surfaces.** Context-menu items (`ContextMenuItem`),
 quick-toolbar items (`QuickToolbarItem`), sort orders, and keyboard shortcuts
-are all enum-driven allowlists defined in `config.rs` with `ALL` /
+are all enum-driven allowlists defined in `config/types.rs` with `ALL` /
 `FILE_OPTIONS` / `FOLDER_OPTIONS` const arrays, serialized as kebab-case
 strings. Adding a new menu/toolbar action means extending the enum, its
 `Display` impl, its membership in the relevant const array, and the default
