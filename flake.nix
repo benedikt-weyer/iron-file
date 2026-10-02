@@ -34,6 +34,14 @@
 
             buildInputs = runtimeLibraries;
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibraries;
+
+            # FHS-style wrappers (steam-run, some editor/agent sandboxes) export
+            # NIX_CFLAGS_LINK=-L/usr/lib, which makes the linker pick the host's
+            # glibc over this shell's. Binaries then require newer libm symbols
+            # than their RUNPATH glibc provides and fail to start.
+            shellHook = ''
+              unset NIX_CFLAGS_LINK
+            '';
           };
         });
 
