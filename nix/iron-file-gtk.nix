@@ -3,6 +3,7 @@
   self,
   craneLib,
   src,
+  dummySrc,
   gtk4,
   makeWrapper,
   pkg-config,
@@ -28,7 +29,7 @@ let
     doCheck = false;
   };
 
-  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+  cargoArtifacts = craneLib.buildDepsOnly (commonArgs // { inherit dummySrc; });
 in
 craneLib.buildPackage (commonArgs // {
   inherit cargoArtifacts;

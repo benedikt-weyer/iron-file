@@ -51,9 +51,20 @@
           pkgs = import nixpkgs { inherit system; };
           craneLib = crane.mkLib pkgs;
           src = import ./nix/source.nix { inherit (pkgs) lib; inherit craneLib self; };
+          # buildDepsOnly stubs every workspace .rs file, including the patched
+          # crates under vendor/. Registry crates such as iced_tiny_skia compile
+          # against those, so keep vendor/ real in the dependency-only build.
+          dummySrc = craneLib.mkDummySrc {
+            inherit src;
+            extraDummyScript = ''
+              rm -rf $out/vendor
+              cp -r ${src}/vendor $out/vendor
+              chmod -R u+w $out/vendor
+            '';
+          };
         in {
-          iron-file = pkgs.callPackage ./nix/iron-file.nix { inherit self craneLib src; };
-          iron-file-gtk = pkgs.callPackage ./nix/iron-file-gtk.nix { inherit self craneLib src; };
+          iron-file = pkgs.callPackage ./nix/iron-file.nix { inherit self craneLib src dummySrc; };
+          iron-file-gtk = pkgs.callPackage ./nix/iron-file-gtk.nix { inherit self craneLib src dummySrc; };
           default = self.packages.${system}.iron-file;
         });
     };

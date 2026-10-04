@@ -3,6 +3,7 @@
   self,
   craneLib,
   src,
+  dummySrc,
   libGL,
   libX11,
   libXcursor,
@@ -50,7 +51,7 @@ let
     doCheck = false;
   };
 
-  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+  cargoArtifacts = craneLib.buildDepsOnly (commonArgs // { inherit dummySrc; });
 in
 craneLib.buildPackage (commonArgs // {
   inherit cargoArtifacts;
