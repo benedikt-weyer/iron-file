@@ -1922,11 +1922,7 @@ impl Gui {
         let locations = self.active_sidebar_locations().into_iter().fold(
             column![].spacing(6),
             |column, location| {
-                let is_dragging = self.dragging_sidebar_location.as_ref() == Some(&location.path);
                 let is_open = self.directory_path == location.path;
-                let is_drop_target = self.dragging_sidebar_location.is_some()
-                    && !is_dragging
-                    && self.sidebar_drop_target.as_ref() == Some(&location.path);
                 let label = location.label.clone();
                 let item = container(
                     row![
@@ -1958,25 +1954,44 @@ impl Gui {
                 ]
                 .width(Length::Fill)
                 .into();
-                let item: Element<'_, Message> = if is_drop_target {
-                    stack![
-                        item,
-                        container(Space::with_height(Length::Fixed(2.0)))
-                            .width(Length::Fill)
-                            .height(Length::Fixed(2.0))
-                            .style(|theme: &Theme| {
-                                iced::widget::container::Style::default()
-                                    .background(theme.palette().primary)
-                            }),
-                    ]
-                    .width(Length::Fill)
-                    .into()
-                } else {
-                    item.into()
-                };
                 column.push(item)
             },
         );
+        // Items have a fixed height (8 + 20 + 8 padding), so the indicator can be
+        // overlaid in the middle of the gap without affecting layout.
+        const ITEM_HEIGHT: f32 = 36.0;
+        const ITEM_SPACING: f32 = 6.0;
+        const LINE_HEIGHT: f32 = 2.0;
+        let drop_index = self
+            .dragging_sidebar_location
+            .as_ref()
+            .zip(self.sidebar_drop_target.as_ref())
+            .filter(|(dragging, target)| dragging != target)
+            .and_then(|(_, target)| {
+                self.active_sidebar_locations()
+                    .iter()
+                    .position(|location| &location.path == target)
+            });
+        let locations: Element<'_, Message> = match drop_index {
+            Some(index) => {
+                let offset = (index as f32 * (ITEM_HEIGHT + ITEM_SPACING)
+                    - ITEM_SPACING / 2.0
+                    - LINE_HEIGHT / 2.0)
+                    .max(0.0);
+                let indicator = column![
+                    Space::with_height(Length::Fixed(offset)),
+                    container(Space::with_height(Length::Fixed(LINE_HEIGHT)))
+                        .width(Length::Fill)
+                        .height(Length::Fixed(LINE_HEIGHT))
+                        .style(|theme: &Theme| {
+                            iced::widget::container::Style::default()
+                                .background(theme.palette().primary)
+                        }),
+                ];
+                stack![locations, indicator].width(Length::Fill).into()
+            }
+            None => locations.into(),
+        };
         let mounted = self.mounts.iter().fold(
             column![
                 row![
