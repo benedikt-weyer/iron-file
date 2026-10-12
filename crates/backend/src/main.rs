@@ -29,7 +29,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _lock = acquire_singleton_lock(&socket)?;
     let listener = bind_singleton_socket(&socket).await?;
     let (logs, _) = broadcast::channel(256);
-    let service = FileBrowserService { logs };
+    let (clipboard, _) = tokio::sync::watch::channel(proto::ClipboardContents::default());
+    let service = FileBrowserService {
+        logs,
+        clipboard: std::sync::Arc::new(clipboard),
+    };
     service.log(format!(
         "iron-file backend listening on {}",
         socket.display()

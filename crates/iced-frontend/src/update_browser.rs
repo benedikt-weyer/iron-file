@@ -159,6 +159,16 @@ impl Gui {
                 Task::perform(copy_entries(vec![path], parent), Message::FileCopyFinished)
             }
             Message::ExecuteBrowserCommand(command) => self.execute_browser_command(command),
+            Message::ClipboardChanged(clipboard) => {
+                self.paste_buffer = clipboard.map(PasteBuffer::from);
+                Task::none()
+            }
+            Message::ClipboardShared(result) => {
+                if let Err(error) = result {
+                    self.status = format!("Clipboard is not shared with other windows: {error}");
+                }
+                Task::none()
+            }
             Message::FileCopyFinished(result) => match result {
                 Ok(paths) => {
                     self.status = format!("Copied {} item(s)", paths.len());
@@ -173,7 +183,10 @@ impl Gui {
                 Ok(paths) => {
                     self.paste_buffer = None;
                     self.status = format!("Moved {} item(s)", paths.len());
-                    Task::perform(delete_entries(sources), Message::FileDeleteFinished)
+                    Task::batch([
+                        self.share_clipboard(),
+                        Task::perform(delete_entries(sources), Message::FileDeleteFinished),
+                    ])
                 }
                 Err(error) => {
                     self.status = format!("Move failed: {error}");

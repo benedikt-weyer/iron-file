@@ -23,9 +23,10 @@ pub mod proto {
 }
 
 use proto::{
-    CreateEntryRequest, DeleteEntriesRequest, EntryInfoRequest, FileCommandRequest,
-    ListDirectoryRequest, LogStreamRequest, OpenPathRequest, RenameEntryRequest,
-    SearchDirectoryRequest, ThumbnailRequest, file_browser_client::FileBrowserClient,
+    ClipboardContents, ClipboardMode, CreateEntryRequest, DeleteEntriesRequest, EntryInfoRequest,
+    FileCommandRequest, ListDirectoryRequest, LogStreamRequest, OpenPathRequest,
+    RenameEntryRequest, SearchDirectoryRequest, ThumbnailRequest, WatchClipboardRequest,
+    file_browser_client::FileBrowserClient,
 };
 
 const BACKEND_MODE_ENV: &str = "IRON_FILE_BACKEND_MODE";
@@ -469,6 +470,81 @@ pub async fn restart_backend() -> Result<(), String> {
         return Err("Restarting the backend is not supported on this platform".into());
     }
     ensure_backend().await
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClipboardKind {
+    Copy,
+    Move,
+    Symlink,
+}
+
+/// File clipboard shared by every frontend window through the backend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Clipboard {
+    pub paths: Vec<PathBuf>,
+    pub kind: ClipboardKind,
+}
+
+impl Clipboard {
+    fn from_proto(contents: ClipboardContents) -> Option<Self> {
+        let kind = match ClipboardMode::try_from(contents.mode).ok()? {
+            ClipboardMode::Empty => return None,
+            ClipboardMode::Copy => ClipboardKind::Copy,
+            ClipboardMode::Move => ClipboardKind::Move,
+            ClipboardMode::Symlink => ClipboardKind::Symlink,
+        };
+        Some(Self {
+            paths: contents.paths.into_iter().map(PathBuf::from).collect(),
+            kind,
+        })
+    }
+}
+
+/// Replaces the shared clipboard; `None` clears it.
+pub async fn set_clipboard(clipboard: Option<Clipboard>) -> Result<(), String> {
+    let contents = match clipboard {
+        Some(Clipboard { paths, kind }) => ClipboardContents {
+            paths: paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+            mode: match kind {
+                ClipboardKind::Copy => ClipboardMode::Copy,
+                ClipboardKind::Move => ClipboardMode::Move,
+                ClipboardKind::Symlink => ClipboardMode::Symlink,
+            } as i32,
+        },
+        None => ClipboardContents::default(),
+    };
+    // An older backend answers `Unimplemented`; fail closed instead of restarting it and
+    // losing other windows' state.
+    let mut client = connect_or_start().await?;
+    client
+        .set_clipboard(Request::new(contents))
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+/// Yields the shared clipboard now and again whenever any window changes it. Reconnects
+/// if the backend restarts.
+pub fn watch_clipboard() -> impl tokio_stream::Stream<Item = Option<Clipboard>> {
+    async_stream::stream! {
+        loop {
+            if let Ok(mut client) = connect_or_start().await
+                && let Ok(response) = client
+                    .watch_clipboard(Request::new(WatchClipboardRequest {}))
+                    .await
+            {
+                let mut updates = response.into_inner();
+                while let Ok(Some(contents)) = updates.message().await {
+                    yield Clipboard::from_proto(contents);
+                }
+            }
+            sleep(STARTUP_RETRY_DELAY * 10).await;
+        }
+    }
 }
 
 pub async fn pipe_backend_logs() -> Result<(), String> {

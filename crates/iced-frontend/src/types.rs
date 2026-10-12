@@ -380,6 +380,32 @@ pub(super) struct PasteBuffer {
     pub(super) mode: PasteMode,
 }
 
+impl From<Clipboard> for PasteBuffer {
+    fn from(clipboard: Clipboard) -> Self {
+        Self {
+            entries: clipboard.paths,
+            mode: match clipboard.kind {
+                ClipboardKind::Copy => PasteMode::Copy,
+                ClipboardKind::Move => PasteMode::Move,
+                ClipboardKind::Symlink => PasteMode::Symlink,
+            },
+        }
+    }
+}
+
+impl From<&PasteBuffer> for Clipboard {
+    fn from(buffer: &PasteBuffer) -> Self {
+        Self {
+            paths: buffer.entries.clone(),
+            kind: match buffer.mode {
+                PasteMode::Copy => ClipboardKind::Copy,
+                PasteMode::Move => ClipboardKind::Move,
+                PasteMode::Symlink => ClipboardKind::Symlink,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) enum Message {
     AddressChanged(String),
@@ -404,6 +430,8 @@ pub(super) enum Message {
     WindowCursorMoved(Point),
     ExecuteBrowserCommand(BrowserCommand),
     FileCopyFinished(Result<Vec<PathBuf>, String>),
+    ClipboardChanged(Option<Clipboard>),
+    ClipboardShared(Result<(), String>),
     CutPasteFinished {
         sources: Vec<PathBuf>,
         result: Result<Vec<PathBuf>, String>,

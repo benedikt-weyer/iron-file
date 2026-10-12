@@ -1,6 +1,12 @@
 use super::*;
 
 impl Gui {
+    /// Publishes the local paste buffer so every other window sees it.
+    pub(super) fn share_clipboard(&self) -> Task<Message> {
+        let clipboard = self.paste_buffer.as_ref().map(Clipboard::from);
+        Task::perform(set_clipboard(clipboard), Message::ClipboardShared)
+    }
+
     pub(super) fn confirm_picker(&mut self) -> Task<Message> {
         let Some(picker) = self.picker.as_ref() else {
             return Task::none();
@@ -76,6 +82,7 @@ impl Gui {
                         .as_ref()
                         .map_or(0, |buffer| buffer.entries.len());
                     self.status = format!("Copied {count} item(s) to the clipboard");
+                    return self.share_clipboard();
                 }
                 Task::none()
             }
@@ -92,6 +99,7 @@ impl Gui {
                     });
                     self.context_entry = None;
                     self.status = format!("Cut {count} item(s) to the clipboard");
+                    return self.share_clipboard();
                 }
                 Task::none()
             }
@@ -102,6 +110,7 @@ impl Gui {
                 ) {
                     self.paste_buffer = None;
                     self.status = "Cut cancelled".into();
+                    return self.share_clipboard();
                 }
                 Task::none()
             }
@@ -145,7 +154,7 @@ impl Gui {
                         if sources.is_empty() {
                             self.paste_buffer = None;
                             self.status = "Item(s) are already in this folder".into();
-                            return Task::none();
+                            return self.share_clipboard();
                         }
                         let to_delete = sources.clone();
                         Task::perform(copy_entries(sources, destination), move |result| {
@@ -180,7 +189,7 @@ impl Gui {
                 });
                 self.context_entry = None;
                 self.status = "Added symbolic link to the paste buffer".into();
-                Task::none()
+                self.share_clipboard()
             }
             BrowserCommand::CreateSymlinksHere(source) => {
                 self.context_entry = None;

@@ -48,7 +48,7 @@ use iced::{
 };
 use iconflow::{Pack, Size, Style, fonts, try_icon};
 use iron_file_common::{
-    browse_with_thumbnails, compress_entries,
+    Clipboard, ClipboardKind, browse_with_thumbnails, compress_entries,
     config::{
         BrowserLayout, BrowserSettings, ColorMode, ConfigStore, ContextMenuBlurKernelSize,
         ContextMenuItem, EntrySortOrder, FolderSortOverride, KeyboardShortcutAction, NameAlignment,
@@ -56,7 +56,7 @@ use iron_file_common::{
     },
     copy_entries, create_entry, create_symlinks, create_thumbnail, delete_entries, ensure_backend,
     extract_archives, inspect_entry, pipe_backend_logs, proto, rename_entry, restart_backend,
-    search_directory, stream_directory,
+    search_directory, set_clipboard, stream_directory, watch_clipboard,
 };
 use proto::{BrowseResponse, browse_response::Payload};
 use serde::Deserialize;
@@ -134,7 +134,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 impl Gui {
     fn subscription(&self) -> Subscription<Message> {
-        iced::event::listen_raw(|event, _, _| match event {
+        let clipboard = Subscription::run(watch_clipboard).map(Message::ClipboardChanged);
+        let events = iced::event::listen_raw(|event, _, _| match event {
             iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 Some(Message::LeftMouseButtonPressed)
             }
@@ -214,7 +215,8 @@ impl Gui {
                 shortcut_key_name(&key).map(Message::ShortcutPressed)
             }
             _ => None,
-        })
+        });
+        Subscription::batch([events, clipboard])
     }
 
     fn new(

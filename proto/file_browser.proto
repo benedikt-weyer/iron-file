@@ -21,9 +21,25 @@ service FileBrowser {
   rpc CompressEntries(FileCommandRequest) returns (FileCommandResponse);
   rpc ExtractArchives(FileCommandRequest) returns (FileCommandResponse);
   rpc StreamLogs(LogStreamRequest) returns (stream LogEntry);
+  rpc SetClipboard(ClipboardContents) returns (ClipboardContents);
+  rpc WatchClipboard(WatchClipboardRequest) returns (stream ClipboardContents);
 }
 
 message LogStreamRequest {}
+
+enum ClipboardMode {
+  CLIPBOARD_MODE_EMPTY = 0;
+  CLIPBOARD_MODE_COPY = 1;
+  CLIPBOARD_MODE_MOVE = 2;
+  CLIPBOARD_MODE_SYMLINK = 3;
+}
+
+message ClipboardContents {
+  repeated string paths = 1;
+  ClipboardMode mode = 2;
+}
+
+message WatchClipboardRequest {}
 
 message LogEntry {
   string message = 1;

@@ -8,21 +8,22 @@ use crate::{
     thumbnails::{ThumbnailOutcome, thumbnail_for},
 };
 use iron_file_common::proto;
+use std::sync::Arc;
 use std::{
     path::{Path, PathBuf},
     pin::Pin,
 };
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status};
 
 use proto::{
-    AppChoice, BrowseResponse, CreateEntryRequest, DeleteEntriesRequest, EntryInfoRequest,
-    EntryInfoResponse, FileCommandRequest, FileCommandResponse, FileEntry, ListDirectoryRequest,
-    ListOpenWithAppsResponse, LogEntry, LogStreamRequest, OpenPathRequest, OpenWithRequest,
-    OpenWithResponse, RenameEntryRequest, SearchDirectoryRequest, SearchDirectoryResponse,
-    ThumbnailRequest, ThumbnailResponse, browse_response::Payload,
-    file_browser_server::FileBrowser,
+    AppChoice, BrowseResponse, ClipboardContents, CreateEntryRequest, DeleteEntriesRequest,
+    EntryInfoRequest, EntryInfoResponse, FileCommandRequest, FileCommandResponse, FileEntry,
+    ListDirectoryRequest, ListOpenWithAppsResponse, LogEntry, LogStreamRequest, OpenPathRequest,
+    OpenWithRequest, OpenWithResponse, RenameEntryRequest, SearchDirectoryRequest,
+    SearchDirectoryResponse, ThumbnailRequest, ThumbnailResponse, WatchClipboardRequest,
+    browse_response::Payload, file_browser_server::FileBrowser,
 };
 
 pub(crate) async fn blocking<T: Send + 'static>(
@@ -37,12 +38,15 @@ pub(crate) async fn blocking<T: Send + 'static>(
 #[derive(Clone)]
 pub(crate) struct FileBrowserService {
     pub(crate) logs: broadcast::Sender<String>,
+    pub(crate) clipboard: Arc<watch::Sender<ClipboardContents>>,
 }
 
 #[tonic::async_trait]
 impl FileBrowser for FileBrowserService {
     type ListDirectoryStream = Pin<Box<dyn Stream<Item = Result<FileEntry, Status>> + Send>>;
     type StreamLogsStream = Pin<Box<dyn Stream<Item = Result<LogEntry, Status>> + Send>>;
+    type WatchClipboardStream =
+        Pin<Box<dyn Stream<Item = Result<ClipboardContents, Status>> + Send>>;
 
     async fn open_path(
         &self,
@@ -379,6 +383,34 @@ impl FileBrowser for FileBrowserService {
             }
         });
         self.log("Frontend subscribed to backend logs");
+        Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
+    }
+
+    async fn set_clipboard(
+        &self,
+        request: Request<ClipboardContents>,
+    ) -> Result<Response<ClipboardContents>, Status> {
+        let contents = request.into_inner();
+        self.log(format!("Clipboard set to {} item(s)", contents.paths.len()));
+        self.clipboard.send_replace(contents.clone());
+        Ok(Response::new(contents))
+    }
+
+    async fn watch_clipboard(
+        &self,
+        _: Request<WatchClipboardRequest>,
+    ) -> Result<Response<Self::WatchClipboardStream>, Status> {
+        let mut clipboard = self.clipboard.subscribe();
+        let (sender, receiver) = mpsc::channel(8);
+        tokio::spawn(async move {
+            // The first message is the current contents, so a new window starts in sync.
+            loop {
+                let contents = clipboard.borrow_and_update().clone();
+                if sender.send(Ok(contents)).await.is_err() || clipboard.changed().await.is_err() {
+                    break;
+                }
+            }
+        });
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
     }
 }
