@@ -143,11 +143,14 @@ impl<T: 'static> EventLoop<T> {
             WaylandError::Calloop
         )?;
 
+        super::dnd::register_awakener(event_loop_awakener.clone());
+        let drag_queue_handle = queue_handle.clone();
         let result = event_loop
             .handle()
             .insert_source(event_loop_awakener_source, move |_, _, winit_state: &mut WinitState| {
                 // Mark that we have something to dispatch.
                 winit_state.dispatched_events = true;
+                winit_state.start_pending_file_drag(&drag_queue_handle);
             })
             .map_err(|error| error.error);
         map_err!(result, WaylandError::Calloop)?;

@@ -36,3 +36,15 @@ ever needed, without re-deriving the removed code from scratch.
 
 Iron File vendors the patched crate at `vendor/winit` and selects it through
 the workspace `[patch.crates-io]` override, same as the Iced crates above.
+
+`winit-wayland-file-dnd.patch` targets `winit` 0.30.13's Wayland backend. Stock
+winit has no `wl_data_device` support, so file drag-and-drop between windows
+(or from other applications) cannot work on Wayland. The patch adds
+`wayland/dnd.rs`: as a drop target it turns `text/uri-list` offers into
+`CursorEntered`/`CursorMoved`, `HoveredFile` and `DroppedFile` events (the data
+is read through a calloop source, so a drag between two windows of one process
+cannot deadlock); as a drag source, `winit::platform::wayland::start_file_drag`
+starts a drag from the window under the pointer using the last button serial,
+and `HoveredFileCancelled` is sent to that window when the drag ends. The
+negotiated action is readable through `last_file_drop_is_move`. Nothing changes
+on X11, macOS or Windows.

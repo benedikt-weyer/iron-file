@@ -142,6 +142,17 @@ impl Gui {
             iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 Some(Message::LeftMouseButtonReleased)
             }
+            iced::Event::Window(window::Event::Resized(size))
+            | iced::Event::Window(window::Event::Opened { size, .. }) => {
+                Some(Message::WindowResized(size))
+            }
+            iced::Event::Window(window::Event::FileHovered(_)) => {
+                Some(Message::ExternalDragEntered)
+            }
+            iced::Event::Window(window::Event::FilesHoveredLeft) => Some(Message::ExternalDragLeft),
+            iced::Event::Window(window::Event::FileDropped(path)) => {
+                Some(Message::FileDropped(path))
+            }
             iced::Event::Mouse(mouse::Event::CursorMoved { position }) => {
                 Some(Message::WindowCursorMoved(position))
             }
@@ -298,6 +309,10 @@ impl Gui {
             entry_drop_target: None,
             hovered_entry: None,
             window_cursor_position: Point::ORIGIN,
+            window_size: iced::Size::new(1024.0, 768.0),
+            external_drag_started: false,
+            external_drag_over: false,
+            pending_dropped_files: Vec::new(),
             last_entry_click: None,
             terminal_recommendations: recommended_terminal_commands(),
             history: Vec::new(),

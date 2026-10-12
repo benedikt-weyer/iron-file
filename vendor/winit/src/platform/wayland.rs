@@ -23,6 +23,29 @@ use crate::window::{Window, WindowAttributes};
 
 pub use crate::window::Theme;
 
+/// Starts a drag-and-drop of `paths` (as `text/uri-list`) from the window under the pointer.
+///
+/// Call this while the mouse button that started the drag is still held. When the drag ends,
+/// the source window receives [`WindowEvent::HoveredFileCancelled`]. Windows of any client that
+/// accept the drop receive [`WindowEvent::DroppedFile`]. Returns `false` if the Wayland backend
+/// is not in use.
+///
+/// [`WindowEvent::HoveredFileCancelled`]: crate::event::WindowEvent::HoveredFileCancelled
+/// [`WindowEvent::DroppedFile`]: crate::event::WindowEvent::DroppedFile
+pub fn start_file_drag(paths: Vec<std::path::PathBuf>) -> bool {
+    crate::platform_impl::wayland::dnd::start_file_drag(paths)
+}
+
+/// Whether a drag started with [`start_file_drag`] is still in progress.
+pub fn file_drag_active() -> bool {
+    crate::platform_impl::wayland::dnd::file_drag_active()
+}
+
+/// Whether the most recent file drop negotiated a move (`true`) instead of a copy.
+pub fn last_file_drop_is_move() -> bool {
+    crate::platform_impl::wayland::dnd::last_drop_action()
+}
+
 /// Additional methods on [`ActiveEventLoop`] that are specific to Wayland.
 pub trait ActiveEventLoopExtWayland {
     /// True if the [`ActiveEventLoop`] uses Wayland.

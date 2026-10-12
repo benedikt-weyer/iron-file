@@ -59,6 +59,75 @@ impl Gui {
         self.save_sidebar_locations(locations);
     }
 
+    pub(super) fn drag_in_progress(&self) -> bool {
+        self.dragging_entries.is_some() || self.external_drag_over
+    }
+
+    /// Starts a Wayland drag when an in-window drag leaves the window, so the files can be
+    /// dropped into another window or application.
+    pub(super) fn start_external_drag_if_outside(&mut self) {
+        let position = self.window_cursor_position;
+        let outside = position.x < 0.0
+            || position.y < 0.0
+            || position.x > self.window_size.width
+            || position.y > self.window_size.height;
+        if !outside
+            || self.external_drag_started
+            || self.picker.is_some()
+            || winit::platform::wayland::file_drag_active()
+        {
+            return;
+        }
+        let Some(mut entries) = self.dragging_entries.clone() else {
+            return;
+        };
+        entries.sort();
+        if winit::platform::wayland::start_file_drag(entries) {
+            self.external_drag_started = true;
+            self.entry_drop_target = None;
+            self.sidebar_drop_target = None;
+        }
+    }
+
+    /// Handles files dropped from another window or application onto the folder, sidebar
+    /// location or current directory under the pointer.
+    pub(super) fn drop_external_files(&mut self) -> Task<Message> {
+        let sources = std::mem::take(&mut self.pending_dropped_files);
+        let destination = self
+            .entry_drop_target
+            .take()
+            .or_else(|| self.sidebar_drop_target.take())
+            .unwrap_or_else(|| self.directory_path.clone());
+        self.external_drag_over = false;
+        let is_move = winit::platform::wayland::last_file_drop_is_move();
+        let sources = sources
+            .into_iter()
+            .filter(|path| {
+                !is_move || (path != &destination && path.parent() != Some(destination.as_path()))
+            })
+            .collect::<Vec<_>>();
+        if sources.is_empty() {
+            self.status = "Item(s) are already in this folder".into();
+            return Task::none();
+        }
+        if is_move {
+            let to_delete = sources.clone();
+            self.status = format!("Moving {} item(s)...", to_delete.len());
+            Task::perform(copy_entries(sources, destination), move |result| {
+                Message::CutPasteFinished {
+                    sources: to_delete.clone(),
+                    result,
+                }
+            })
+        } else {
+            self.status = format!("Copying {} item(s)...", sources.len());
+            Task::perform(
+                copy_entries(sources, destination),
+                Message::FileCopyFinished,
+            )
+        }
+    }
+
     pub(super) fn drop_dragged_entries(&mut self, target: PathBuf) -> Task<Message> {
         self.entry_drop_target = None;
         let Some(sources) = self.dragging_entries.take() else {

@@ -61,3 +61,15 @@ alignment. Valid values are `"left"`, `"center"`, and `"right"`; the default is
 
 The `[browser]` `scroll_step` setting controls the pixel distance moved by one
 line-wheel scroll event. Its default is `60`.
+
+## Dragging files between windows
+
+Dragging files out of a window starts a Wayland drag-and-drop (`text/uri-list`)
+once the pointer leaves the window, so they can be dropped into another Iron
+File window or any application that accepts file drops. Files dropped onto a
+window land in the folder under the pointer, otherwise in the current
+directory. Between Iron File windows the compositor's negotiated action
+decides: the default is a move, holding the copy modifier (usually Ctrl)
+copies. Drops from other applications are copied unless they request a move.
+This needs a compositor with `wl_data_device_manager` v3 for the move/copy
+choice; it is Wayland only and disabled in picker mode.

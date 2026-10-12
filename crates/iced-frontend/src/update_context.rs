@@ -310,7 +310,7 @@ impl Gui {
                 }
             }
             Message::SidebarDragTarget(path) => {
-                if self.dragging_sidebar_location.is_some() || self.dragging_entries.is_some() {
+                if self.dragging_sidebar_location.is_some() || self.drag_in_progress() {
                     self.sidebar_drop_target = Some(path);
                 }
                 Task::none()

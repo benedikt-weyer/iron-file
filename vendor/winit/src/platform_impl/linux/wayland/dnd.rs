@@ -1,0 +1,424 @@
+//! Drag-and-drop of files over `wl_data_device` (`text/uri-list`).
+//!
+//! Winit has no upstream Wayland drag-and-drop support. This module adds both halves:
+//!
+//! * **Target**: a drag entering one of our windows produces `HoveredFile` (with an empty
+//!   path, since the data is only read on drop), `CursorEntered`/`CursorMoved` for the drag
+//!   position, and on drop one `DroppedFile` per `file://` URI. `HoveredFileCancelled` is sent
+//!   when the drag leaves.
+//! * **Source**: [`start_file_drag`] starts a drag of the given paths from the window that
+//!   currently has pointer focus. `HoveredFileCancelled` is sent to that window when the drag
+//!   ends, since a window that starts a drag never sees the button release.
+//!
+//! The negotiated action (copy or move) of the last drop is available through
+//! [`last_drop_action`]; the receiving application performs the file operation itself.
+
+use std::fs::File;
+use std::io::{Read, Write};
+use std::os::fd::OwnedFd;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+
+use sctk::compositor::SurfaceData;
+use sctk::data_device_manager::data_device::{DataDeviceData, DataDeviceHandler};
+use sctk::data_device_manager::data_offer::{DataOfferHandler, DragOffer};
+use sctk::data_device_manager::data_source::{DataSourceHandler, DragSource};
+use sctk::data_device_manager::WritePipe;
+use sctk::reexports::calloop::ping::Ping;
+use sctk::reexports::calloop::PostAction;
+use sctk::reexports::client::protocol::wl_data_device::WlDataDevice;
+use sctk::reexports::client::protocol::wl_data_device_manager::DndAction;
+use sctk::reexports::client::protocol::wl_data_source::WlDataSource;
+use sctk::reexports::client::protocol::wl_surface::WlSurface;
+use sctk::reexports::client::{Connection, Proxy, QueueHandle};
+use sctk::shell::WaylandSurface;
+
+use crate::dpi::{LogicalPosition, PhysicalPosition};
+use crate::event::WindowEvent;
+use crate::platform_impl::wayland::seat::WinitPointerDataExt;
+use crate::platform_impl::wayland::state::WinitState;
+use crate::platform_impl::wayland::{make_wid, DeviceId, WindowId};
+
+const URI_LIST: &str = "text/uri-list";
+
+static PENDING_DRAG: Mutex<Option<Vec<PathBuf>>> = Mutex::new(None);
+static AWAKENER: OnceLock<Ping> = OnceLock::new();
+static LAST_DROP_MOVE: AtomicU8 = AtomicU8::new(0);
+static DRAG_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Registers the event loop's awakener so [`start_file_drag`] can reach the loop.
+pub fn register_awakener(awakener: Ping) {
+    let _ = AWAKENER.set(awakener);
+}
+
+/// Requests a drag of `paths` from the window under the pointer. The compositor needs the
+/// serial of the button press that started the drag, so call this while the button is held.
+///
+/// Returns `false` when the Wayland backend is not running.
+pub fn start_file_drag(paths: Vec<PathBuf>) -> bool {
+    let Some(awakener) = AWAKENER.get() else {
+        return false;
+    };
+    *PENDING_DRAG.lock().unwrap() = Some(paths);
+    awakener.ping();
+    true
+}
+
+/// Whether a drag started by [`start_file_drag`] is still in progress.
+pub fn file_drag_active() -> bool {
+    DRAG_ACTIVE.load(Ordering::Relaxed)
+}
+
+/// Whether the most recent drop asked for a move (`true`) rather than a copy.
+pub fn last_drop_action() -> bool {
+    LAST_DROP_MOVE.load(Ordering::Relaxed) != 0
+}
+
+pub struct DndState {
+    source: Option<ActiveDrag>,
+    incoming: Option<Incoming>,
+    action: DndAction,
+}
+
+impl Default for DndState {
+    fn default() -> Self {
+        Self { source: None, incoming: None, action: DndAction::empty() }
+    }
+}
+
+struct ActiveDrag {
+    _source: DragSource,
+    uris: Arc<Vec<u8>>,
+    window: WindowId,
+}
+
+struct Incoming {
+    offer: DragOffer,
+    window: WindowId,
+    accepts: bool,
+    dropped: bool,
+}
+
+impl WinitState {
+    /// Starts the drag queued by [`start_file_drag`], if any.
+    pub fn start_pending_file_drag(&mut self, queue_handle: &QueueHandle<Self>) {
+        let Some(paths) = PENDING_DRAG.lock().unwrap().take() else {
+            return;
+        };
+        if paths.is_empty() || self.dnd.source.is_some() {
+            return;
+        }
+        let Some(manager) = self.data_device_manager.as_ref() else {
+            return;
+        };
+
+        let Some((seat, serial, window_id)) = self.seats.values().find_map(|seat| {
+            let data = seat.pointer()?.pointer().winit_data();
+            Some((data.seat().clone(), data.latest_button_serial(), data.focused_window()?))
+        }) else {
+            return;
+        };
+        let Some(device) = self.data_devices.get(&seat.id()) else {
+            return;
+        };
+        let Some(surface) = self
+            .windows
+            .get_mut()
+            .get(&window_id)
+            .map(|window| window.lock().unwrap().window.wl_surface().clone())
+        else {
+            return;
+        };
+
+        let source = manager.create_drag_and_drop_source(
+            queue_handle,
+            [URI_LIST],
+            DndAction::Copy | DndAction::Move,
+        );
+        source.start_drag(device, &surface, None, serial);
+
+        let uris = paths
+            .iter()
+            .filter_map(|path| path_to_uri(path))
+            .map(|uri| uri + "\r\n")
+            .collect::<String>()
+            .into_bytes();
+        self.dnd.source = Some(ActiveDrag { _source: source, uris: Arc::new(uris), window: window_id });
+        DRAG_ACTIVE.store(true, Ordering::Relaxed);
+    }
+
+    fn end_file_drag(&mut self) {
+        if let Some(drag) = self.dnd.source.take() {
+            DRAG_ACTIVE.store(false, Ordering::Relaxed);
+            self.events_sink.push_window_event(WindowEvent::HoveredFileCancelled, drag.window);
+            self.dispatched_events = true;
+        }
+    }
+
+    fn drag_window(&self, surface: &WlSurface) -> Option<(WindowId, f64)> {
+        let parent = surface.data::<SurfaceData>()?.parent_surface().unwrap_or(surface);
+        let window_id = make_wid(parent);
+        let scale = self.windows.borrow().get(&window_id)?.lock().unwrap().scale_factor();
+        Some((window_id, scale))
+    }
+
+    fn push_drag_position(&mut self, window: WindowId, x: f64, y: f64) {
+        let Some(scale) = self.windows.borrow().get(&window).map(|w| w.lock().unwrap().scale_factor())
+        else {
+            return;
+        };
+        let position: PhysicalPosition<f64> = LogicalPosition::new(x, y).to_physical(scale);
+        let device_id = crate::event::DeviceId(crate::platform_impl::DeviceId::Wayland(DeviceId));
+        self.events_sink
+            .push_window_event(WindowEvent::CursorMoved { device_id, position }, window);
+        self.dispatched_events = true;
+    }
+
+    fn finish_drag_offer(&mut self, cancelled: bool) {
+        if let Some(incoming) = self.dnd.incoming.take() {
+            incoming.offer.destroy();
+            if cancelled {
+                self.events_sink.push_window_event(WindowEvent::HoveredFileCancelled, incoming.window);
+                self.dispatched_events = true;
+            }
+        }
+    }
+}
+
+impl DataDeviceHandler for WinitState {
+    fn enter(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        data_device: &WlDataDevice,
+        x: f64,
+        y: f64,
+        surface: &WlSurface,
+    ) {
+        let Some(offer) = data_device.data::<DataDeviceData>().and_then(|data| data.drag_offer())
+        else {
+            return;
+        };
+        let Some((window, _)) = self.drag_window(surface) else {
+            offer.destroy();
+            return;
+        };
+
+        let accepts = offer.with_mime_types(|types| types.iter().any(|mime| mime == URI_LIST));
+        if accepts {
+            offer.accept_mime_type(offer.serial, Some(URI_LIST.to_owned()));
+            offer.set_actions(DndAction::Copy | DndAction::Move, DndAction::Move);
+        } else {
+            offer.accept_mime_type(offer.serial, None);
+        }
+        self.dnd.action = DndAction::empty();
+        self.dnd.incoming = Some(Incoming { offer, window, accepts, dropped: false });
+
+        if accepts {
+            let device_id =
+                crate::event::DeviceId(crate::platform_impl::DeviceId::Wayland(DeviceId));
+            self.events_sink.push_window_event(WindowEvent::CursorEntered { device_id }, window);
+            self.events_sink.push_window_event(WindowEvent::HoveredFile(PathBuf::new()), window);
+            self.push_drag_position(window, x, y);
+        }
+    }
+
+    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {
+        if self.dnd.incoming.as_ref().is_some_and(|incoming| !incoming.dropped) {
+            let accepts = self.dnd.incoming.as_ref().is_some_and(|incoming| incoming.accepts);
+            if let Some(window) = self.dnd.incoming.as_ref().map(|incoming| incoming.window) {
+                if accepts {
+                    let device_id =
+                        crate::event::DeviceId(crate::platform_impl::DeviceId::Wayland(DeviceId));
+                    self.events_sink
+                        .push_window_event(WindowEvent::CursorLeft { device_id }, window);
+                }
+            }
+            self.finish_drag_offer(accepts);
+        }
+    }
+
+    fn motion(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice, x: f64, y: f64) {
+        if let Some(window) =
+            self.dnd.incoming.as_ref().filter(|incoming| incoming.accepts).map(|i| i.window)
+        {
+            self.push_drag_position(window, x, y);
+        }
+    }
+
+    fn selection(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {}
+
+    fn drop_performed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {
+        let Some(incoming) = self.dnd.incoming.as_mut() else {
+            return;
+        };
+        incoming.dropped = true;
+        let window = incoming.window;
+        let offer = incoming.offer.clone();
+        let is_move = self.dnd.action.contains(DndAction::Move);
+
+        let pipe = if incoming.accepts { offer.receive(URI_LIST.to_owned()).ok() } else { None };
+        let Some(pipe) = pipe else {
+            self.finish_drag_offer(true);
+            return;
+        };
+
+        let mut data = Vec::new();
+        let inserted = self.loop_handle.insert_source(pipe, move |(), file, state: &mut WinitState| {
+            let mut chunk = [0u8; 8192];
+            // SAFETY: the file is only read, never closed or replaced.
+            let read = unsafe { file.get_mut() }.read(&mut chunk);
+            match read {
+                Ok(count) if count > 0 => {
+                    data.extend_from_slice(&chunk[..count]);
+                    return PostAction::Continue;
+                },
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    return PostAction::Continue;
+                },
+                _ => {},
+            }
+
+            let paths = parse_uri_list(&String::from_utf8_lossy(&data));
+            LAST_DROP_MOVE.store(is_move as u8, Ordering::Relaxed);
+            if let Some(incoming) = state.dnd.incoming.take() {
+                incoming.offer.finish();
+                incoming.offer.destroy();
+            }
+            if paths.is_empty() {
+                state.events_sink.push_window_event(WindowEvent::HoveredFileCancelled, window);
+            }
+            for path in paths {
+                state.events_sink.push_window_event(WindowEvent::DroppedFile(path), window);
+            }
+            state.dispatched_events = true;
+            PostAction::Remove
+        });
+        if inserted.is_err() {
+            self.finish_drag_offer(true);
+        }
+    }
+}
+
+impl DataOfferHandler for WinitState {
+    fn source_actions(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &mut DragOffer, _: DndAction) {}
+
+    fn selected_action(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &mut DragOffer,
+        action: DndAction,
+    ) {
+        self.dnd.action = action;
+    }
+}
+
+impl DataSourceHandler for WinitState {
+    fn accept_mime(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource, _: Option<String>) {}
+
+    fn send_request(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &WlDataSource,
+        mime: String,
+        fd: WritePipe,
+    ) {
+        let Some(drag) = self.dnd.source.as_ref().filter(|_| mime == URI_LIST) else {
+            return;
+        };
+        let uris = drag.uris.clone();
+        // The receiver may live in this very process (another window), so never block the loop.
+        std::thread::spawn(move || {
+            let mut file = File::from(OwnedFd::from(fd));
+            let _ = file.write_all(&uris);
+        });
+    }
+
+    fn cancelled(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {
+        self.end_file_drag();
+    }
+
+    fn dnd_dropped(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
+
+    fn dnd_finished(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {
+        self.end_file_drag();
+    }
+
+    fn action(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource, _: DndAction) {}
+}
+
+sctk::delegate_data_device!(WinitState);
+
+fn path_to_uri(path: &std::path::Path) -> Option<String> {
+    use std::os::unix::ffi::OsStrExt;
+    if !path.is_absolute() {
+        return None;
+    }
+    let mut uri = String::from("file://");
+    for &byte in path.as_os_str().as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                uri.push(byte as char)
+            },
+            _ => uri.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    Some(uri)
+}
+
+fn parse_uri_list(list: &str) -> Vec<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    list.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| line.strip_prefix("file://"))
+        // Skip an optional host (`file://localhost/...`); `file:///...` has an empty one.
+        .filter_map(|rest| rest.find('/').map(|index| &rest[index..]))
+        .map(|encoded| {
+            let bytes = encoded.as_bytes();
+            let mut decoded = Vec::with_capacity(bytes.len());
+            let mut index = 0;
+            while index < bytes.len() {
+                let hex = (bytes[index] == b'%')
+                    .then(|| bytes.get(index + 1..index + 3))
+                    .flatten()
+                    .and_then(|pair| std::str::from_utf8(pair).ok())
+                    .and_then(|pair| u8::from_str_radix(pair, 16).ok());
+                match hex {
+                    Some(byte) => {
+                        decoded.push(byte);
+                        index += 3;
+                    },
+                    None => {
+                        decoded.push(bytes[index]);
+                        index += 1;
+                    },
+                }
+            }
+            PathBuf::from(std::ffi::OsString::from_vec(decoded))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uri_list_round_trips_awkward_names() {
+        let path = PathBuf::from("/tmp/a b/ü%#.txt");
+        let uri = path_to_uri(&path).unwrap();
+        assert_eq!(parse_uri_list(&format!("# comment\r\n{uri}\r\n\r\nhttp://x/y\r\n")), vec![path]);
+    }
+
+    #[test]
+    fn uri_list_skips_host() {
+        assert_eq!(
+            parse_uri_list("file://localhost/home/a\nfile:///home/b"),
+            vec![PathBuf::from("/home/a"), PathBuf::from("/home/b")]
+        );
+    }
+}

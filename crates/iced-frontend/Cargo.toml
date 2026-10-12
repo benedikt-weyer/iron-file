@@ -13,7 +13,9 @@ gio = "0.22"
 iron-file-common = { path = "../common" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+# The workspace patches this to vendor/winit, which adds Wayland file drag-and-drop.
+winit = { version = "0.30", default-features = false, features = ["wayland"] }
 
 [dev-dependencies]
 naga = { version = "0.19", features = ["wgsl-in"] }

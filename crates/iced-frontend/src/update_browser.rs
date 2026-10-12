@@ -89,7 +89,7 @@ impl Gui {
             }
             Message::EntryHovered { path, is_directory } => {
                 self.hovered_entry = Some((path.clone(), is_directory));
-                if is_directory && self.dragging_entries.is_some() {
+                if is_directory && self.drag_in_progress() {
                     self.entry_drop_target = Some(path);
                 }
                 Task::none()
@@ -126,6 +126,7 @@ impl Gui {
             }
             Message::WindowCursorMoved(position) => {
                 self.window_cursor_position = position;
+                self.start_external_drag_if_outside();
                 if let Some((start, entries)) = &self.pending_drag {
                     let delta = *start - position;
                     if delta.x.hypot(delta.y) > DRAG_START_THRESHOLD {
@@ -168,6 +169,38 @@ impl Gui {
                 }
                 Task::none()
             }
+            Message::WindowResized(size) => {
+                self.window_size = size;
+                Task::none()
+            }
+            Message::ExternalDragEntered => {
+                self.external_drag_over = self.picker.is_none();
+                Task::none()
+            }
+            Message::ExternalDragLeft => {
+                // Also the end of a drag this window started: it never sees the button release.
+                self.external_drag_over = false;
+                self.external_drag_started = false;
+                self.pending_drag = None;
+                self.dragging_entries = None;
+                self.entry_drop_target = None;
+                self.sidebar_drop_target = None;
+                Task::none()
+            }
+            Message::FileDropped(path) => {
+                if self.picker.is_some() || self.view != View::Browser {
+                    return Task::none();
+                }
+                self.pending_dropped_files.push(path);
+                if self.pending_dropped_files.len() > 1 {
+                    return Task::none();
+                }
+                // The compositor delivers every dropped file as its own event; batch them.
+                Task::perform(tokio::time::sleep(Duration::from_millis(40)), |()| {
+                    Message::FlushDroppedFiles
+                })
+            }
+            Message::FlushDroppedFiles => self.drop_external_files(),
             Message::ToggleClipboardPopup => {
                 self.show_clipboard = self.paste_buffer.is_some() && !self.show_clipboard;
                 Task::none()

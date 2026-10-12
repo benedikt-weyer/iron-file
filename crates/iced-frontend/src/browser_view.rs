@@ -93,8 +93,8 @@ impl Gui {
             let path = PathBuf::from(&entry.path);
             let is_selected = self.selected_entries.contains(&path);
             if entry.is_directory {
-                let is_drop_target = self.dragging_entries.is_some()
-                    && self.entry_drop_target.as_ref() == Some(&path);
+                let is_drop_target =
+                    self.drag_in_progress() && self.entry_drop_target.as_ref() == Some(&path);
                 let row_item = mouse_area(
                     button(
                         row![
@@ -192,7 +192,7 @@ impl Gui {
                                 let path = PathBuf::from(&entry.path);
                                 let is_selected = self.selected_entries.contains(&path);
                                 let is_drop_target = entry.is_directory
-                                    && self.dragging_entries.is_some()
+                                    && self.drag_in_progress()
                                     && self.entry_drop_target.as_ref() == Some(&path);
                                 let icon = self.entry_icon(entry, tile_icon_size);
                                 let tile_content = container(
@@ -1856,7 +1856,7 @@ impl Gui {
                 }
             };
             let is_drop_target =
-                self.dragging_entries.is_some() && self.entry_drop_target.as_ref() == Some(&target);
+                self.drag_in_progress() && self.entry_drop_target.as_ref() == Some(&target);
             let crumb = mouse_area(
                 button(text(label))
                     .style(move |theme, status| {

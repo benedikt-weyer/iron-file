@@ -12,6 +12,8 @@ use sctk::reexports::client::protocol::wl_surface::WlSurface;
 use sctk::reexports::client::{Connection, Proxy, QueueHandle};
 
 use sctk::compositor::{CompositorHandler, CompositorState};
+use sctk::data_device_manager::data_device::DataDevice;
+use sctk::data_device_manager::DataDeviceManagerState;
 use sctk::output::{OutputHandler, OutputState};
 use sctk::registry::{ProvidesRegistryState, RegistryState};
 use sctk::seat::pointer::ThemedPointer;
@@ -37,6 +39,8 @@ use crate::platform_impl::wayland::window::{WindowRequests, WindowState};
 use crate::platform_impl::wayland::{WaylandError, WindowId};
 use crate::platform_impl::OsError;
 
+use crate::platform_impl::wayland::dnd::DndState;
+
 /// Winit's Wayland state.
 pub struct WinitState {
     /// The WlRegistry.
@@ -53,6 +57,15 @@ pub struct WinitState {
 
     /// The seat state responsible for all sorts of input.
     pub seat_state: SeatState,
+
+    /// Manager for file drag-and-drop, if the compositor offers it.
+    pub data_device_manager: Option<DataDeviceManagerState>,
+
+    /// One data device per seat.
+    pub data_devices: AHashMap<ObjectId, DataDevice>,
+
+    /// In-flight drag-and-drop state.
+    pub dnd: DndState,
 
     /// The shm for software buffers, such as cursors.
     pub shm: Shm,
@@ -148,6 +161,14 @@ impl WinitState {
             seats.insert(seat.id(), WinitSeatState::new());
         }
 
+        let data_device_manager = DataDeviceManagerState::bind(globals, queue_handle).ok();
+        let mut data_devices = AHashMap::default();
+        if let Some(manager) = &data_device_manager {
+            for seat in seat_state.seats() {
+                data_devices.insert(seat.id(), manager.get_data_device(queue_handle, &seat));
+            }
+        }
+
         let (viewporter_state, fractional_scaling_manager) =
             if let Ok(fsm) = FractionalScalingManager::new(globals, queue_handle) {
                 (ViewporterState::new(globals, queue_handle).ok(), Some(fsm))
@@ -164,6 +185,9 @@ impl WinitState {
             subcompositor_state: subcompositor_state.map(Arc::new),
             output_state,
             seat_state,
+            data_device_manager,
+            data_devices,
+            dnd: DndState::default(),
             shm,
             custom_cursor_pool,
 
