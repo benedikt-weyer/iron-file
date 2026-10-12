@@ -51,6 +51,7 @@ pub(super) struct Gui {
     pub(super) selected_entries: HashSet<PathBuf>,
     pub(super) paste_buffer: Option<PasteBuffer>,
     pub(super) pending_delete: Option<Vec<PathBuf>>,
+    pub(super) show_clipboard: bool,
     pub(super) delete_confirm_selected: bool,
     pub(super) pending_create: Option<(PathBuf, bool)>,
     pub(super) create_entry_name: String,
@@ -432,6 +433,10 @@ pub(super) enum Message {
     FileCopyFinished(Result<Vec<PathBuf>, String>),
     ClipboardChanged(Option<Clipboard>),
     ClipboardShared(Result<(), String>),
+    ToggleClipboardPopup,
+    CloseClipboardPopup,
+    ClearClipboard,
+    PasteFromClipboardPopup,
     CutPasteFinished {
         sources: Vec<PathBuf>,
         result: Result<Vec<PathBuf>, String>,

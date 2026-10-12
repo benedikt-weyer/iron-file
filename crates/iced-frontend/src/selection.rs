@@ -110,6 +110,7 @@ impl Gui {
             || self.pending_create.is_some()
             || self.pending_rename.is_some()
             || self.pending_compression
+            || self.show_clipboard
             || self.selected_entries.len() != 1
         {
             return;

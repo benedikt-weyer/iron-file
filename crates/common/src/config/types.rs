@@ -304,10 +304,11 @@ pub enum QuickToolbarItem {
     FolderSort,
     CompressSelection,
     ExtractSelection,
+    Clipboard,
 }
 
 impl QuickToolbarItem {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Refresh,
         Self::CloneWindow,
         Self::PerformanceDebugger,
@@ -316,6 +317,7 @@ impl QuickToolbarItem {
         Self::FolderSort,
         Self::CompressSelection,
         Self::ExtractSelection,
+        Self::Clipboard,
     ];
 }
 
@@ -397,6 +399,7 @@ impl fmt::Display for QuickToolbarItem {
             Self::FolderSort => "Override folder sorting",
             Self::CompressSelection => "Compress selection",
             Self::ExtractSelection => "Extract selection",
+            Self::Clipboard => "Show clipboard",
         })
     }
 }

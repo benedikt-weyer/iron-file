@@ -311,6 +311,7 @@ impl Gui {
             selected_entries: HashSet::new(),
             paste_buffer: None,
             pending_delete: None,
+            show_clipboard: false,
             delete_confirm_selected: false,
             pending_create: None,
             create_entry_name: String::new(),

@@ -22,6 +22,8 @@ impl Gui {
             Message::EscapePressed => {
                 if self.context_entry.is_some() {
                     self.context_entry = None;
+                } else if self.show_clipboard {
+                    self.show_clipboard = false;
                 } else if self.pending_info.is_some() {
                     self.pending_info = None;
                 } else if self.pending_rename.is_some() {
@@ -161,7 +163,28 @@ impl Gui {
             Message::ExecuteBrowserCommand(command) => self.execute_browser_command(command),
             Message::ClipboardChanged(clipboard) => {
                 self.paste_buffer = clipboard.map(PasteBuffer::from);
+                if self.paste_buffer.is_none() {
+                    self.show_clipboard = false;
+                }
                 Task::none()
+            }
+            Message::ToggleClipboardPopup => {
+                self.show_clipboard = self.paste_buffer.is_some() && !self.show_clipboard;
+                Task::none()
+            }
+            Message::CloseClipboardPopup => {
+                self.show_clipboard = false;
+                Task::none()
+            }
+            Message::ClearClipboard => {
+                self.show_clipboard = false;
+                self.paste_buffer = None;
+                self.status = "Clipboard cleared".into();
+                self.share_clipboard()
+            }
+            Message::PasteFromClipboardPopup => {
+                self.show_clipboard = false;
+                self.execute_browser_command(BrowserCommand::Paste)
             }
             Message::ClipboardShared(result) => {
                 if let Err(error) = result {

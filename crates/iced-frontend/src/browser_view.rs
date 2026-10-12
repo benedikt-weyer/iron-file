@@ -390,6 +390,17 @@ impl Gui {
                     tooltip::Position::Bottom,
                 )
                 .into(),
+                QuickToolbarItem::Clipboard => {
+                    if self.paste_buffer.is_none() {
+                        continue;
+                    }
+                    tooltip(
+                        button(icon_text("clipboard-list")).on_press(Message::ToggleClipboardPopup),
+                        text("Show clipboard"),
+                        tooltip::Position::Bottom,
+                    )
+                    .into()
+                }
             };
             quick_toolbar_actions = quick_toolbar_actions.push(action);
         }
@@ -1148,6 +1159,62 @@ impl Gui {
             .width(Length::Fill)
             .height(Length::Fill)
         });
+        let clipboard_popup = self
+            .show_clipboard
+            .then(|| self.paste_buffer.as_ref())
+            .flatten()
+            .map(|buffer| {
+                let heading = match buffer.mode {
+                    PasteMode::Copy => "Copied",
+                    PasteMode::Move => "Cut",
+                    PasteMode::Symlink => "Symbolic link source",
+                };
+                let items = column(
+                    buffer
+                        .entries
+                        .iter()
+                        .map(|path| text(path.display().to_string()).into()),
+                )
+                .spacing(4);
+                let dialog = container(
+                    column![
+                        text(format!("{heading}: {} item(s)", buffer.entries.len())),
+                        scrollable(items).height(Length::Shrink),
+                        row![
+                            button(text("Close")).on_press(Message::CloseClipboardPopup),
+                            button(text("Clear")).on_press(Message::ClearClipboard),
+                            button(text("Paste"))
+                                .style(button_style::primary)
+                                .on_press(Message::PasteFromClipboardPopup),
+                        ]
+                        .spacing(8),
+                    ]
+                    .spacing(12),
+                )
+                .padding(16)
+                .max_width(520)
+                .max_height(420)
+                .style(|theme: &Theme| {
+                    iced::widget::container::Style::default()
+                        .background(theme.palette().background)
+                        .border(Border {
+                            color: theme.palette().primary,
+                            width: 1.0,
+                            radius: border_radius().into(),
+                        })
+                });
+                stack![
+                    mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+                        .on_press(Message::CloseClipboardPopup),
+                    container(dialog)
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                ]
+                .width(Length::Fill)
+                .height(Length::Fill)
+            });
         let create_dialog = self.pending_create.as_ref().map(|(_, is_directory)| {
             let kind = if *is_directory { "folder" } else { "file" };
             name_prompt_dialog(
@@ -1588,6 +1655,7 @@ impl Gui {
         stack![page]
             .push_maybe(overlay)
             .push_maybe(delete_confirmation)
+            .push_maybe(clipboard_popup)
             .push_maybe(create_dialog)
             .push_maybe(rename_dialog)
             .push_maybe(compression_dialog)
