@@ -1978,7 +1978,21 @@ impl Gui {
             },
         );
         let mounted = self.mounts.iter().fold(
-            column![text("Mounted").size(16)].spacing(4),
+            column![
+                row![
+                    text("Mounted").size(16).width(Length::Fill),
+                    tooltip(
+                        button(icon_text("rotate-cw").size(14))
+                            .padding(2)
+                            .style(iced::widget::button::text)
+                            .on_press(Message::RefreshMounts),
+                        text("Refresh drives"),
+                        tooltip::Position::Bottom,
+                    ),
+                ]
+                .align_y(iced::alignment::Vertical::Center)
+            ]
+            .spacing(4),
             |column, mount| {
                 column.push(
                     button(

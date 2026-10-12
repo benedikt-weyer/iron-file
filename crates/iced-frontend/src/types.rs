@@ -595,6 +595,7 @@ pub(super) enum Message {
     SidebarDragTargetEnd,
     SidebarDragTargetEndCleared,
     SidebarReleasedAtEnd,
+    RefreshMounts,
     MountsLoaded(Result<MountState, String>),
     MountDrive(PathBuf),
     FileOpened(Result<(), String>),

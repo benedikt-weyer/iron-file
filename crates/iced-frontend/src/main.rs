@@ -227,7 +227,9 @@ impl Gui {
             }
             _ => None,
         });
-        Subscription::batch([events, clipboard])
+        let mounts_refresh =
+            iced::time::every(std::time::Duration::from_secs(5)).map(|_| Message::RefreshMounts);
+        Subscription::batch([events, clipboard, mounts_refresh])
     }
 
     fn new(

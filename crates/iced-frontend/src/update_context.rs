@@ -333,6 +333,7 @@ impl Gui {
                 Task::none()
             }
             Message::SidebarReleasedAtEnd => self.release_sidebar_location_at_end(),
+            Message::RefreshMounts => Task::perform(load_mounts(), Message::MountsLoaded),
             Message::MountsLoaded(result) => {
                 match result {
                     Ok(state) => {
